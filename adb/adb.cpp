@@ -16,6 +16,8 @@
         "\"";
 
 static std::string adb_executable = "";
+
+#define BUFSIZE 65536
 bool sc_adb_init()
 {
 
@@ -82,97 +84,98 @@ bool sc_adb_start_server(sc_intr &intr, unsigned flags)
 	return process_check_success_intr(intr, pid, "adb start-server", flags);
 }
 
-bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_vec, bool extern_str)
+bool sc_adb_get_device_info(std::vector<char> &buf, sc_intr &intr, unsigned flags, size_t &r, const char *shell)
 {
-	std::vector<std::string> commands = SC_ADB_COMMAND("devices", "-l");
-	
+	buf.clear();
+	buf.resize(BUFSIZE);
+	std::vector<std::string> commands = SC_ADB_COMMAND(shell);
+	sc_pipe pout;
+	sc_pid pid = sc_adb_execute_p(commands, flags, &pout);
+	if (pid == SC_PROCESS_NONE) {
+		// LOGE("Could not execute adb devices -l");
+		return false;
+	}
+	r = sc_pipe_read_all_intr(intr, pid, pout, buf.data(), BUFSIZE - 1);
+	sc_pipe_close(pout);
+	bool ok = process_check_success_intr(intr, pid, "adb -s get_device_info", flags);
 
-#define BUFSIZE 65536
+	if (!ok) {
+		return false;
+	}
+
+	if (r == -1 || r >= BUFSIZE - 1) {
+		// LOGE(" too large");
+		return false;
+	}
+	return true;
+}
+
+bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_vec)
+{
 	std::vector<char> buf(BUFSIZE);
 	size_t r; 
-	auto get_device_info = [&]( std::vector<char> &buf, unsigned flags,
-				   size_t& r,const char *shell) {
-		buf.clear();
-		buf.resize(BUFSIZE);
-		std::vector<std::string> commands = SC_ADB_COMMAND(shell);
-		sc_pipe pout;
-		sc_pid pid = sc_adb_execute_p(commands, flags, &pout);
-		if (pid == SC_PROCESS_NONE) {
-			// LOGE("Could not execute adb devices -l");
-			return false;
-		}
-		r = sc_pipe_read_all_intr(intr, pid, pout, buf.data(), BUFSIZE - 1);
-		sc_pipe_close(pout);
-		bool ok = process_check_success_intr(intr, pid, "adb -s get_device_info", flags);
-
-		if (!ok) {
-			return false;
-		}
-
-		if (r == -1 || r >= BUFSIZE - 1) {
-			// LOGE(" too large");
-			return false;
-		}
-		return true;
-	};
-	get_device_info(buf, flags, r, "devices -l");
+	
+	sc_adb_get_device_info(buf,intr, flags, r, "devices -l");
 	bool ok = sc_adb_parse_devices(std::string_view(buf.data(), r), out_vec);
 
-	
+	return ok;
+}
+
+bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_infos &out_vec)
+{
+	std::vector<char> buf(BUFSIZE);
+	sc_vec_adb_devices devices;
+	bool ok = sc_adb_list_devices(intr, flags, devices);
+	out_vec.reserve(devices.size());
+
+	size_t r; 
 	std::string tmp = {DEVICE_INFO};
-	if (extern_str) {
-		for (auto &device : out_vec) {
-			std::string shell = " -s " + device.serial + " " + tmp;
-			get_device_info(buf, flags, r, DEVICE_INFO);
-			std::string out(buf.data(), r);
+	for (auto &device : devices) {
+		std::string shell = " -s " + device.serial + " " + tmp;
+		ok = sc_adb_get_device_info(buf, intr, flags, r, DEVICE_INFO);
+		std::string out(buf.data(), r);
+		// 解析输出
+		std::string vendor;
+		std::string odm;
+		std::string wm;
+		std::istringstream iss(out);
+		std::string line;
 
-			// 解析输出
-			std::string vendor;
-			std::string odm;
-			std::string wm;
-			std::istringstream iss(out);
-			std::string line;
+		auto trim = [](std::string &s) {
+			while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
+				s.pop_back();
+			while (!s.empty() && s.front() == ' ')
+				s.erase(s.begin());
+		};
 
-			auto trim = [](std::string &s) {
-				while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
-					s.pop_back();
-				while (!s.empty() && s.front() == ' ')
-					s.erase(s.begin());
-			};
+		while (std::getline(iss, line)) {
+			trim(line);
 
-			while (std::getline(iss, line)) {
-				trim(line);
+			if (line.rfind("VENDOR=", 0) == 0) {
+				vendor = line.substr(7);
+				trim(vendor);
+			} else if (line.rfind("ODM=", 0) == 0) {
+				odm = line.substr(4);
+				trim(odm);
+			} else if (wm.empty()) {
+				if (line.rfind("Physical size:", 0) == 0 ||
+				    line.rfind("Override size:", 0) == 0) {
 
-				if (line.rfind("VENDOR=", 0) == 0) {
-					vendor = line.substr(7);
-					trim(vendor);
-				} else if (line.rfind("ODM=", 0) == 0) {
-					odm = line.substr(4);
-					trim(odm);
-				} else if (wm.empty()) {
-					if (line.rfind("Physical size:", 0) == 0 ||
-					    line.rfind("Override size:", 0) == 0) {
-
-						auto pos = line.find(':');
-						if (pos != std::string::npos) {
-							wm = line.substr(pos + 1);
-							trim(wm);
-						}
+					auto pos = line.find(':');
+					if (pos != std::string::npos) {
+						wm = line.substr(pos + 1);
+						trim(wm);
 					}
 				}
 			}
-			if (odm.length() > 0) {
-				device.best_name = odm;
-			} else if (vendor.length() > 0) {
-				device.best_name = vendor;
-			} else {
-				device.best_name = device.model;
-			}
-			device.physical_size = wm; 
 		}
-		return ok;
+		out_vec.emplace_back(std::move(device),
+				     !odm.empty() ? std::move(odm)
+						  : (!vendor.empty() ? std::move(vendor) : std::move(device.model)), //表达式调用时会先计算每个参数实际值再传值 std::move(device.model)安全
+				     std::move(wm));
 	}
 	return ok;
+	
 }
 
 bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector, unsigned flags,

@@ -10,7 +10,6 @@
 
 #define SC_ADB_SILENT (SC_ADB_NO_STDOUT | SC_ADB_NO_STDERR | SC_ADB_NO_LOGERR)
 
-typedef std::vector<sc_adb_device> sc_vec_adb_devices;
 
 enum sc_adb_device_selector_type {
 	SC_ADB_DEVICE_SELECT_ALL,
@@ -33,7 +32,11 @@ static sc_pid sc_adb_execute_p(const std::vector<std::string> &commands, unsigne
 
 bool sc_adb_start_server(sc_intr &intr, unsigned flags);
 
-bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_vec, bool extern_str = false);
+bool sc_adb_get_device_info(std::vector<char> &buf, sc_intr &intr, unsigned flags, size_t &r, const char *shell);
+
+bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_vec);
+
+bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_infos &out_vec);
 
 bool sc_adb_select_device(class sc_intr &intr, const struct sc_adb_device_selector &selector, unsigned flags,
 			  struct sc_adb_device &out_device);
