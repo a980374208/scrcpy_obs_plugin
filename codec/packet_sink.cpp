@@ -95,6 +95,7 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 		enum video_format format = VIDEO_FORMAT_NONE;
 		switch (file_sink->m_frame->format) {
 		case AV_PIX_FMT_YUV420P:
+		case AV_PIX_FMT_YUVJ420P:
 			format = VIDEO_FORMAT_I420;
 			break;
 		case AV_PIX_FMT_NV12:

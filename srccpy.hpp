@@ -5,6 +5,7 @@
 #include <memory>
 #include <obs-module.h>
 #include "util/options.h"
+#include <adb/adb_device.h>
 
 
 enum scrcpy_exit_code {
@@ -28,13 +29,18 @@ public:
 	void update(obs_data_t *settings);
 
 
+	void get_device_infos(sc_vec_adb_device_infos &device_infos,std::string &serial);
 
+	void update_device_infos(sc_vec_adb_device_infos &device_infos);
+
+	sc_vec_adb_device_infos get_device_infos();
 
 	static void sc_server_on_connection_failed(sc_server &server, void *userdata);
 
 	static void sc_server_on_connected(sc_server &server, void *userdata);
 
 	static void sc_server_on_disconnected(sc_server &server, void *userdata);
+
 
 private:
 	uint32_t generate_scid();
@@ -51,5 +57,6 @@ public:
 	struct sc_server_params params;
 	uint32_t width = 0;
 	uint32_t height = 0;
+	sc_vec_adb_device_infos device_infos;
 };
 void register_srccpy();

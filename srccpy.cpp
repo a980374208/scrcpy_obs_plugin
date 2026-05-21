@@ -7,6 +7,9 @@
 #include <thread>
 #include <obs-source.h>
 #include "util/str_util.h"
+#include <util/process_intr.h>
+#include <adb/adb.h>
+#include <nlohmann/json.hpp>
 
 static bool await_for_signal(ServerConnectSignal &signal)
 {
@@ -126,6 +129,9 @@ int scrcpy::srccpy_init()
 	if (!server.server_init(&cbs, this)) {
 		return SCRCPY_EXIT_FAILURE;
 	}
+	if (!server.push_server(server.m_intr, server.m_serial)) {
+		return SCRCPY_EXIT_FAILURE;
+	}
 
 	return 0;
 }
@@ -140,9 +146,8 @@ void scrcpy::update(obs_data_t *settings)
 		choose_src = (int)obs_data_get_int(settings, "choose_src");
 		choose_camera = (int)obs_data_get_int(settings, "choose_camera");
 		max_fps = (int)obs_data_get_int(settings, "max_fps");
-		auto device = DecodeDevice(select_device);
 
-		params.req_serial = device.device.serial.c_str();
+		params.req_serial = strdup(select_device.c_str());
 		params.camera_facing = static_cast<enum sc_camera_facing>(choose_camera);
 		params.video_source = static_cast<enum sc_video_source>(choose_src);
 		static std::string fps_str;
@@ -186,6 +191,133 @@ void scrcpy::update(obs_data_t *settings)
 	} else {
 		video_demuxer_started = true;
 	}
+}
+
+void scrcpy::get_device_infos(sc_vec_adb_device_infos &device_infos, std::string &serial)
+{
+	this->server.push_server(server.m_intr, serial);
+	params.list = SC_OPTION_LIST_DEVICE_INFOS;
+	sc_pipe pout = 0;
+	sc_pid pid = server.execute_server(params,&pout);
+	if (pid == SC_PROCESS_NONE) {
+		return;
+	}
+	if (pid == SC_PROCESS_NONE) {
+		// LOGE("Could not execute adb devices -l");
+		return ;
+	}
+	params.list = 0;
+	std::vector<char> buf;
+	size_t r;
+	buf.resize(BUFSIZE);
+	r = sc_pipe_read_all_intr(server.m_intr, pid, pout, buf.data(), BUFSIZE - 1);
+	bool ok = process_check_success_intr(server.m_intr, pid, "adb -s SC_OPTION_LIST_DEVICE_INFOS", 0);
+	if (ok) {
+		std::string json_str(buf.data(), r);
+		try {
+			auto j = nlohmann::json::parse(json_str);
+			sc_adb_device_info info{};
+
+			if (j.contains("serial") && j["serial"].is_string()) {
+				info.device.serial = j["serial"].get<std::string>();
+			}
+			if (j.contains("state") && j["state"].is_string()) {
+				info.device.state = get_device_state_from_string(j["state"].get<std::string>());
+			}
+			if (j.contains("device") && j["device"].is_string()) {
+				info.device.model = j["device"].get<std::string>();
+			}
+			info.device.selected = false;
+
+			info.best_name = info.device.model;
+
+			if (j.contains("display") && j["display"].is_array()) {
+				for (const auto &disp : j["display"]) {
+					sc_adb_display d;
+					if (disp.contains("id")) {
+						if (disp["id"].is_number()) {
+							d.id =disp["id"].get<int>();
+						} else if (disp["id"].is_string()) {
+							d.id = std::stoi(disp["id"].get<std::string>());
+						}
+					}
+					if (disp.contains("size") && disp["size"].is_string()) {
+						d.physical_size = disp["size"].get<std::string>();
+					}
+					if (disp.contains("fps")) {
+						if (disp["fps"].is_number()) {
+							d.fps = disp["fps"].get<int>();
+						} else if (disp["fps"].is_string()) {
+							d.fps = std::stoi(disp["fps"].get<std::string>());
+						}
+					}
+					info.displays.emplace(d.id,std::move(d));
+				}
+			}
+
+
+			info.has_external = false;
+			if (j.contains("camera") && j["camera"].is_array()) {
+				for (const auto &cam : j["camera"]) {
+					sc_adb_camera c;
+					if (cam.contains("id")) {
+						if (cam["id"].is_number()) {
+							c.id = std::to_string(cam["id"].get<int>());
+						} else if (cam["id"].is_string()) {
+							c.id = cam["id"].get<std::string>();
+						}
+					}
+					if (cam.contains("facing") && cam["facing"].is_string()) {
+						std::string facing = cam["facing"].get<std::string>();
+						if (facing == "front") {
+							c.facing = SC_CAMERA_FACING_FRONT;
+						} else if (facing == "back") {
+							c.facing = SC_CAMERA_FACING_BACK;
+						} else if (facing == "external") {
+							c.facing = SC_CAMERA_FACING_EXTERNAL;
+							info.has_external = true;
+						} else {
+							c.facing = SC_CAMERA_FACING_ANY;
+						}
+					} else {
+						c.facing = SC_CAMERA_FACING_ANY;
+					}
+
+					if (cam.contains("size") && cam["size"].is_array()) {
+						for (const auto &sz : cam["size"]) {
+							if (sz.is_string()) {
+								c.suport_sizes.push_back(sz.get<std::string>());
+							}
+						}
+					}
+
+					if (cam.contains("fps") && cam["fps"].is_array()) {
+						for (const auto &f : cam["fps"]) {
+							if (f.is_number()) {
+								c.suport_fps.push_back(f.get<int16_t>());
+							}
+						}
+					}
+					info.cameras.emplace(c.id,std::move(c));
+				}
+			}
+
+			device_infos.emplace(info.device.serial,std::move(info));
+		} catch (const std::exception &e) {
+			blog(LOG_WARNING, "Failed to parse device info JSON: %s", e.what());
+		}
+	}
+
+
+}
+
+void scrcpy::update_device_infos(sc_vec_adb_device_infos &device_infos)
+{
+	this->device_infos = std::move(device_infos);
+}
+
+sc_vec_adb_device_infos scrcpy::get_device_infos() {
+	return this->device_infos;
 }
 
 void scrcpy::sc_server_on_connection_failed(sc_server &server, void *userdata)

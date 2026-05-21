@@ -1,52 +1,63 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <map>
+#include <util/options.h>
+
+enum device_connect_state {
+	DEVICE_STATE_OFFLINE,
+	DEVICE_STATE_BOOTLOADER,
+	DEVICE_STATE_DEVICE,
+	DEVICE_STATE_RECOVERY,
+	DEVICE_STATE_UNAUTHORIZE,
+	DEVICE_STATE_SIDELOAD,
+	DEVICE_STATE_UNKNOWN,
+};
 
 struct sc_adb_device {
 	std::string serial;
-	std::string state;
 	std::string model;
+	device_connect_state state;
 	bool selected;
 
-	// 默认构造
-	sc_adb_device() : serial(), state(), model(), selected(false) {}
+	sc_adb_device() : serial(), state(DEVICE_STATE_UNKNOWN), model(), selected(false) {}
 
-	// 完整构造
-	sc_adb_device(std::string s, std::string st, std::string m, bool sel = false)
+	sc_adb_device(std::string s, device_connect_state st, std::string m, bool sel = false)
 		: serial(std::move(s)),
-		  state(std::move(st)),
+		  state(st),
 		  model(std::move(m)),
 		  selected(sel)
 	{
 	}
+};
+struct sc_adb_display {
+	std::uint32_t id;
+	std::string physical_size;
+	std::uint32_t fps;
+};
 
-	// 模板完美转发
-	template<typename S, typename St, typename M, typename Sel = bool>
-	sc_adb_device(S &&s, St &&st, M &&m, Sel sel = false)
-		: serial(std::forward<S>(s)),
-		  state(std::forward<St>(st)),
-		  model(std::forward<M>(m)),
-		  selected(sel)
-	{
-	}
+struct sc_adb_camera {
+	std::string id;
+	sc_camera_facing facing;
+	std::vector<std::string> suport_sizes;
+	std::vector<int16_t> suport_fps;
 };
 
 struct sc_adb_device_info {
 	sc_adb_device device;
-	std::string physical_size;
+
+	std::map<uint32_t, sc_adb_display> displays;
+	std::map<std::string,sc_adb_camera> cameras;
 	std::string best_name;
-	int max_fps;
 	bool has_external;
 
 	// 默认构造
-	sc_adb_device_info() : device(), physical_size(), best_name(), max_fps(0), has_external(false) {}
+	sc_adb_device_info() : device(), best_name(), has_external(false) {}
 
 	// 完整构造
-	sc_adb_device_info(sc_adb_device dev, std::string best, std::string phy, int fps, bool ext)
+	sc_adb_device_info(sc_adb_device dev, std::string best, bool ext)
 		: device(std::move(dev)),
 		  best_name(std::move(best)),
-		  physical_size(std::move(phy)),
-		  max_fps(fps),
 		  has_external(ext)
 	{
 	}
@@ -56,8 +67,6 @@ struct sc_adb_device_info {
 	sc_adb_device_info(D &&dev, B &&best, P &&phy, F fps, H ext)
 		: device(std::forward<D>(dev)),
 		  best_name(std::forward<B>(best)),
-		  physical_size(std::forward<P>(phy)),
-		  max_fps(fps),
 		  has_external(ext)
 	{
 	}
@@ -69,4 +78,4 @@ enum sc_adb_device_type {
 };
 
 typedef std::vector<sc_adb_device> sc_vec_adb_devices;
-typedef std::vector<sc_adb_device_info> sc_vec_adb_device_infos;
+typedef std::map<std::string,sc_adb_device_info> sc_vec_adb_device_infos;

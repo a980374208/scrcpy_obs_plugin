@@ -1,4 +1,5 @@
 #include "adb_parser.h"
+#include <util/str_util.h>
 
 bool sc_adb_parse_devices(std::string_view input, std::vector<sc_adb_device> &out)
 {
@@ -111,7 +112,7 @@ bool sc_adb_parse_device(std::string_view line, sc_adb_device &device)
 	// ---------- fill device ----------
 	try {
 		device.serial = std::string(serial);
-		device.state = std::string(state);
+		device.state = get_device_state_from_string(std::string(state));
 		device.model = model.empty() ? std::string{} : std::string(model);
 		device.selected = false;
 	} catch (const std::bad_alloc &) {

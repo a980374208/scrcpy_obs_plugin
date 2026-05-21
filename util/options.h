@@ -145,6 +145,22 @@ static inline const char *sc_orientation_get_name(enum sc_orientation orientatio
 	}
 }
 
+static inline const char *sc_facing_get_name(enum sc_camera_facing orientation)
+{
+	switch (orientation) {
+	case SC_CAMERA_FACING_ANY:
+		return "any";
+	case SC_CAMERA_FACING_BACK:
+		return "back";
+	case SC_CAMERA_FACING_EXTERNAL:
+		return "external";
+	case SC_CAMERA_FACING_FRONT:
+		return "front";
+	default:
+		return "(unknown)";
+	}
+}
+
 enum sc_keyboard_input_mode {
 	SC_KEYBOARD_INPUT_MODE_AUTO,
 	SC_KEYBOARD_INPUT_MODE_UHID_OR_AOA, // normal vs otg mode

@@ -1,10 +1,10 @@
 #include "adb.h"
-#include "env.h"
+#include "util/env.h"
 #include <vector>
 #include "util/process_intr.h"
 #include "assert.h"
 #include "adb_parser.h"
-#include "str_util.h"
+#include "util/str_util.h"
 #include <sstream>
 
 #define SC_ADB_COMMAND(...) { sc_adb_get_executable(), __VA_ARGS__ }
@@ -27,7 +27,7 @@ const char *DEVICE_INFO =
 
 static std::string adb_executable = "";
 
-#define BUFSIZE 65536
+
 bool sc_adb_init()
 {
 
@@ -125,84 +125,87 @@ bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_
 	std::vector<char> buf(BUFSIZE);
 	size_t r; 
 	
-	sc_adb_get_device_info(buf,intr, flags, r, "devices -l");
-	bool ok = sc_adb_parse_devices(std::string_view(buf.data(), r), out_vec);
+	bool ok = sc_adb_get_device_info(buf,intr, flags, r, "devices -l");
+	if (ok)
+	{
+		ok = sc_adb_parse_devices(std::string_view(buf.data(), r), out_vec);
+	}		
 
 	return ok;
 }
 
-bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_infos &out_vec)
-{
-	std::vector<char> buf(BUFSIZE);
-	sc_vec_adb_devices devices;
-	bool ok = sc_adb_list_devices(intr, flags, devices);
-	if (!ok) {
-		return ok;
-	}
-	out_vec.reserve(devices.size());
-
-	size_t r; 
-	std::string tmp = {DEVICE_INFO};
-	for (auto &device : devices) {
-		std::string shell = " -s " + device.serial + " " + tmp;
-		ok = sc_adb_get_device_info(buf, intr, flags, r, shell.c_str());
-		std::string out(buf.data(), r);
-		// 解析输出
-		std::string vendor;
-		std::string odm;
-		std::string wm;
-		int fps = 60;
-		bool has_external = false;
-
-		std::istringstream iss(out);
-		std::string line;
-		
-		auto trim = [](std::string &s) {
-			while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
-				s.pop_back();
-			while (!s.empty() && s.front() == ' ')
-				s.erase(s.begin());
-		};
-
-		while (std::getline(iss, line)) {
-			trim(line);
-
-			if (line.rfind("VENDOR=", 0) == 0) {
-				vendor = line.substr(7);
-				trim(vendor);
-			} else if (line.rfind("ODM=", 0) == 0) {
-				odm = line.substr(4);
-				trim(odm);
-			} else if (wm.empty()) {
-				if (line.rfind("Physical size:", 0) == 0 ||
-				    line.rfind("Override size:", 0) == 0) {
-
-					auto pos = line.find(':');
-					if (pos != std::string::npos) {
-						wm = line.substr(pos + 1);
-						trim(wm);
-					}
-				}
-			} else if (line.rfind("renderFrameRate=", 0) == 0) {
-				std::string fps_str = line.substr(16);
-				trim(fps_str);
-				fps = static_cast<int>(std::round(std::stof(fps_str)));
-			} else if (line.rfind("EXTERNAL=", 0) == 0) {
-				std::string tmp = line.substr(9);
-				trim(tmp);
-				std::transform(tmp.begin(), tmp.end(), tmp.begin(), ::tolower);
-				has_external = tmp == "true";
-			}
-		}
-		out_vec.emplace_back(std::move(device),
-			!vendor.empty()
-				? std::move(vendor)
-						  : (!odm.empty() ? std::move(odm) : std::move(device.model)), //表达式调用时会先计算每个参数实际值再传值 std::move(device.model)安全
-			std::move(wm), fps, has_external);
-	}
-	return ok;
-	
-}
+//bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_infos &out_vec)
+//{
+//	std::vector<char> buf(BUFSIZE);
+//	sc_vec_adb_devices devices;
+//	bool ok = sc_adb_list_devices(intr, flags, devices);
+//	if (!ok) {
+//		return ok;
+//	}
+//	out_vec.reserve(devices.size());
+//
+//	size_t r; 
+//	std::string tmp = {DEVICE_INFO};
+//	for (auto &device : devices) {
+//		std::string shell = " -s " + device.serial + " " + tmp;
+//		ok = sc_adb_get_device_info(buf, intr, flags, r, shell.c_str());
+//		std::string out(buf.data(), r);
+//		// 解析输出
+//		std::string vendor;
+//		std::string odm;
+//		std::string wm;
+//		int fps = 60;
+//		bool has_external = false;
+//
+//		std::istringstream iss(out);
+//		std::string line;
+//		
+//		auto trim = [](std::string &s) {
+//			while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
+//				s.pop_back();
+//			while (!s.empty() && s.front() == ' ')
+//				s.erase(s.begin());
+//		};
+//
+//		while (std::getline(iss, line)) {
+//			trim(line);
+//
+//			if (line.rfind("VENDOR=", 0) == 0) {
+//				vendor = line.substr(7);
+//				trim(vendor);
+//			} else if (line.rfind("ODM=", 0) == 0) {
+//				odm = line.substr(4);
+//				trim(odm);
+//			} else if (wm.empty()) {
+//				if (line.rfind("Physical size:", 0) == 0 ||
+//				    line.rfind("Override size:", 0) == 0) {
+//
+//					auto pos = line.find(':');
+//					if (pos != std::string::npos) {
+//						wm = line.substr(pos + 1);
+//						trim(wm);
+//					}
+//				}
+//			} else if (line.rfind("renderFrameRate=", 0) == 0) {
+//				std::string fps_str = line.substr(16);
+//				trim(fps_str);
+//				fps = static_cast<int>(std::round(std::stof(fps_str)));
+//			} else if (line.rfind("EXTERNAL=", 0) == 0) {
+//				std::string tmp = line.substr(9);
+//				trim(tmp);
+//				std::transform(tmp.begin(), tmp.end(), tmp.begin(), ::tolower);
+//				has_external = tmp == "true";
+//			}
+//		}
+//		out_vec.emplace_back(std::move(device),
+//			!vendor.empty()
+//				? std::move(vendor)
+//						  : (!odm.empty() ? std::move(odm) : std::move(device.model)), //表达式调用时会先计算每个参数实际值再传值 std::move(device.model)安全
+//			std::move(wm), fps, has_external);
+//	}
+//	return ok;
+//	
+//}
 
 bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector, unsigned flags,
 			  sc_adb_device &out_device)
@@ -287,7 +290,7 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 	return true;
 }
 
-static bool process_check_success_intr(sc_intr &intr, sc_pid pid, const char *name, unsigned flags)
+bool process_check_success_intr(sc_intr &intr, sc_pid pid, const char *name, unsigned flags)
 {
 	if (!intr.set_process(pid)) {
 		// Already interrupted
@@ -405,13 +408,13 @@ sc_adb_device_type sc_adb_device_get_type(const std::string &serial)
 
 static bool sc_adb_device_check_state(sc_adb_device &device, sc_vec_adb_devices &devices)
 {
-	const std::string &state = device.state;
+	const auto &state = device.state;
 
-	if (state == "device") {
+	if (state == DEVICE_STATE_DEVICE) {
 		return true;
 	}
 
-	if (state == "unauthorized") {
+	if (state == DEVICE_STATE_UNAUTHORIZE) {
 		//LOGE("Device is unauthorized:");
 		for (auto &d : devices) {
 			//LOGE("  %s [%s]", d.serial.c_str(), d.state.c_str());

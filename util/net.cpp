@@ -282,6 +282,7 @@ sc_socket net_accept(sc_socket server_socket)
 	}
 #endif
 	if (raw_sock == SC_RAW_SOCKET_NONE) {
+		int err = WSAGetLastError();
 		net_perror("accept");
 		return SC_SOCKET_NONE;
 	}

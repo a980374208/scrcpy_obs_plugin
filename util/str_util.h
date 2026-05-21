@@ -52,52 +52,30 @@ static bool AddDevice(obs_property_t *device_list, const sc_adb_device_info &dev
 	DStr serial, state, model, physical_size, best_name, device_id;
 
 	dstr_from_mbs(serial, device_info.device.serial.c_str());
-	dstr_from_mbs(state, device_info.device.state.c_str());
-	dstr_from_mbs(model, device_info.device.model.c_str());
 	dstr_from_mbs(best_name, device_info.best_name.c_str());
-	dstr_from_mbs(physical_size, device_info.physical_size.c_str());
 
-	dstr_copy_dstr(device_id, serial);
-	dstr_cat(device_id, ":");
-	dstr_cat_dstr(device_id, state);
-	dstr_cat(device_id, ":");
-	dstr_cat_dstr(device_id, model);
-	dstr_cat(device_id, ":");
-	dstr_cat_dstr(device_id, best_name);
-	dstr_cat(device_id, ":");
-	dstr_cat_dstr(device_id, physical_size);
-	dstr_catf(device_id, ":%d", device_info.max_fps);
-	dstr_catf(device_id, ":%s", device_info.has_external ? "true" : "false");
 
-	obs_property_list_add_string(device_list, device_info.best_name.c_str(), device_id);
+	obs_property_list_add_string(device_list, best_name, serial);
 	return true;
 }
 
-static sc_adb_device_info DecodeDevice(const std::string &value)
+inline enum device_connect_state get_device_state_from_string(const std::string &state_str)
 {
-	std::vector<std::string> f;
-	std::stringstream ss(value);
-	std::string token;
-	while (std::getline(ss, token, ':'))
-		f.push_back(std::move(token));
-
-	if (f.size() < 7)
-		throw std::runtime_error("Invalid device info");
-
-	int max_fps = 0;
-	try {
-		max_fps = std::stoi(f[5]);
-	} catch (...) {
-		throw std::runtime_error("Invalid max_fps in device info");
+	if (state_str == "offline") {
+		return DEVICE_STATE_OFFLINE;
+	} else if (state_str == "bootloader") {
+		return DEVICE_STATE_BOOTLOADER;
+	} else if (state_str == "device") {
+		return DEVICE_STATE_DEVICE;
+	} else if (state_str == "recovery") {
+		return DEVICE_STATE_RECOVERY;
+	} else if (state_str == "unauthorized") {
+		return DEVICE_STATE_UNAUTHORIZE;
+	} else if (state_str == "sideload") {
+		return DEVICE_STATE_SIDELOAD;
+	} else {
+		return DEVICE_STATE_UNKNOWN;
 	}
-
-	bool has_external = (f[6] == "true" || f[6] == "1");
-
-	return sc_adb_device_info{{f[0], f[1], f[2], false}, // device: serial/state/model
-				  std::move(f[3]),           // best_name
-				  std::move(f[4]),           // physical_size
-				  max_fps,
-				  has_external};
 }
 
 #endif // SCRCPY_STR_UTIL_H

@@ -112,11 +112,11 @@ public:
 
 	bool server_start();
 
-	static bool push_server(sc_intr &intr, const std::string &serial);
+	bool push_server(sc_intr &intr, const std::string &serial);
 
 	static std::string get_server_path();
 
-	sc_pid execute_server(const struct sc_server_params &params);
+	sc_pid execute_server(const struct sc_server_params &params, sc_pipe *pout);
 
 	bool sc_server_connect_to(struct sc_server_info &info);
 
@@ -147,9 +147,12 @@ public:
 	sc_socket m_video_socket;
 	sc_socket m_audio_socket;
 	sc_socket m_control_socket;
+	std::vector<std::string> pushed_serials;
 
 private:
 	static int run_server(void *);
+
+	
 };
 
 #endif // SC_SERVER_HPP

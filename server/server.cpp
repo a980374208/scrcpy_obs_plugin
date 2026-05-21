@@ -146,6 +146,12 @@ bool sc_server::server_start()
 
 bool sc_server::push_server(sc_intr &intr, const std::string &serial)
 {
+	if (serial.empty()) {
+		return false;
+	}
+	if (std::find(pushed_serials.begin(), pushed_serials.end(), serial) != pushed_serials.end()) {
+		return true;
+	}
 	std::string server_path = get_server_path();
 	if (server_path.empty()) {
 		return false;
@@ -155,6 +161,9 @@ bool sc_server::push_server(sc_intr &intr, const std::string &serial)
 		return false;
 	}
 	bool ok = sc_adb_push(intr, serial, server_path, SC_DEVICE_SERVER_PATH, 0);
+	if (ok) {
+		pushed_serials.emplace_back(serial);
+	}
 	return ok;
 }
 
@@ -185,18 +194,19 @@ std::string sc_server::get_server_path()
 #endif
 }
 
-sc_pid sc_server::execute_server(const sc_server_params &params)
+sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout = nullptr)
 {
 	sc_pid pid = SC_PROCESS_NONE;
 
 	std::string serial = this->m_serial;
-	assert(!serial.empty());
 
 	std::vector<std::string> cmd;
 	cmd.reserve(128);
 	cmd.emplace_back(sc_adb_get_executable());
-	cmd.emplace_back("-s");
-	cmd.emplace_back(serial);
+	if (!serial.empty()) {
+		cmd.emplace_back("-s");
+		cmd.emplace_back(serial);
+	}
 	cmd.emplace_back("shell");
 	cmd.emplace_back("CLASSPATH=" SC_DEVICE_SERVER_PATH);
 	cmd.emplace_back("app_process");
@@ -254,7 +264,11 @@ sc_pid sc_server::execute_server(const sc_server_params &params)
 	// Then click on "Debug"
 #endif
 	// Inherit both stdout and stderr (all server logs are printed to stdout)
-	pid = sc_adb_execute(cmd, 0);
+	if (pout) {
+		pid = sc_adb_execute_p(cmd, 0, pout);
+	} else {
+		pid = sc_adb_execute(cmd, 0);
+	}
 
 	return pid;
 }
@@ -446,13 +460,6 @@ int sc_server::run_server(void *data)
 	auto *server = static_cast<sc_server *>(data);
 	const auto &params = server->m_params;
 
-	// 1. 启动 adb server
-	if (!sc_adb_start_server(server->m_intr, 0)) {
-		server->sc_server_kill_adb_if_requested();
-		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
-		return -1;
-	}
-
 	// 2. 选择设备
 	sc_adb_device_selector selector{};
 	if (const char *env_serial = getenv("ANDROID_SERIAL")) {
@@ -462,16 +469,9 @@ int sc_server::run_server(void *data)
 		selector.type = SC_ADB_DEVICE_SELECT_ALL;
 	}
 
-	sc_adb_device device{};
-	if (!sc_adb_select_device(server->m_intr, selector, 0, device)) {
-		server->sc_server_kill_adb_if_requested();
-		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
-		return -1;
-	}
-
 	// 3. 确定 serial
 	if (!params.tcpip) {
-		server->m_serial = std::move(device.serial);
+		server->m_serial = params.req_serial;
 	}
 	const std::string serial = server->m_serial;
 	if (serial.empty()) {
@@ -480,7 +480,7 @@ int sc_server::run_server(void *data)
 	}
 
 	// 4. push server
-	if (!push_server(server->m_intr, serial)) {
+	if (!server->push_server(server->m_intr, serial)) {
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
@@ -522,8 +522,6 @@ int sc_server::run_server(void *data)
 
 		// 10. 连接 server socket
 		if (!server->sc_server_connect_to(server->m_info)) {
-			sc_process_terminate(pid);
-			sc_process_wait(pid, true);
 			server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 			return -1;
 		}
@@ -556,7 +554,8 @@ int sc_server::run_server(void *data)
 		sc_process_close(pid);
 		server->sc_server_kill_adb_if_requested();
 		return 0;
-	} catch (const std::exception &) {
+	} catch (const std::exception &e) {
+		e;
 		sc_process_terminate(pid);
 		sc_process_wait(pid, true);
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
