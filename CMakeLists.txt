@@ -8,6 +8,7 @@ set(CORE_SOURCES
     device.cpp
     controller.cpp
     srccpy.cpp
+    control_msg.cpp
     server/server.cpp
     server/sc_server_cmd_builder.cpp
     adb/adb.cpp
@@ -42,6 +43,8 @@ set(CORE_HEADERS
     controller.h
     compat.h
     srccpy.hpp
+    control_msg.h
+    coords.h
     server/server.hpp
     server/sc_server_cmd_builder.hpp
     adb/adb.h

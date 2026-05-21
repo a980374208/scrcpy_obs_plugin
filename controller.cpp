@@ -1,67 +1,63 @@
 #include "controller.h"
-#include "net.h"
+#include "util/net.h"
+#include <string.h>
 
-// 初始化控制器
-int controller_init(Controller *ctrl, DeviceInfo *device)
-{
-	if (ctrl == NULL || device == NULL) {
-		return -1;
-	}
-
-	memset(ctrl, 0, sizeof(Controller));
-	ctrl->device = device;
-	ctrl->control_socket = INVALID_SOCKET;
-	ctrl->running = 0;
-
-	LOGI("CONTROLLER", "Controller initialized");
-	return 0;
+extern "C" bool
+sc_controller_init(struct sc_controller *controller, sc_socket control_socket,
+                   const struct sc_controller_callbacks *cbs,
+                   void *cbs_userdata) {
+    controller->control_socket = control_socket;
+    controller->stopped = false;
+    controller->cbs = cbs;
+    controller->cbs_userdata = cbs_userdata;
+    return true;
 }
 
-// 启动控制器
-int controller_start(Controller *ctrl)
-{
-	if (ctrl == NULL || ctrl->device == NULL) {
-		return -1;
-	}
-
-	// 创建控制 socket（示例使用端口 27183）
-	ctrl->control_socket = net_create_server_socket(27183);
-	if (ctrl->control_socket == INVALID_SOCKET) {
-		LOGE("CONTROLLER", "Failed to create control socket");
-		return -1;
-	}
-
-	ctrl->running = 1;
-	LOGI("CONTROLLER", "Controller started on port 27183");
-	return 0;
+extern "C" void
+sc_controller_configure(struct sc_controller *controller,
+                        void *acksync,
+                        void *uhid_devices) {
+    (void)controller;
+    (void)acksync;
+    (void)uhid_devices;
 }
 
-// 停止控制器
-void controller_stop(Controller *ctrl)
-{
-	if (ctrl == NULL) {
-		return;
-	}
-
-	ctrl->running = 0;
-
-	if (ctrl->control_socket != INVALID_SOCKET) {
-		//net_close(ctrl->control_socket);
-		ctrl->control_socket = INVALID_SOCKET;
-	}
-
-	LOGI("CONTROLLER", "Controller stopped");
+extern "C" void
+sc_controller_destroy(struct sc_controller *controller) {
+    sc_controller_stop(controller);
 }
 
-// 清理控制器
-void controller_cleanup(Controller *ctrl)
-{
-	if (ctrl == NULL) {
-		return;
-	}
+extern "C" bool
+sc_controller_start(struct sc_controller *controller) {
+    (void)controller;
+    return true;
+}
 
-	controller_stop(ctrl);
-	memset(ctrl, 0, sizeof(Controller));
+extern "C" void
+sc_controller_stop(struct sc_controller *controller) {
+    controller->stopped = true;
+}
 
-	LOGI("CONTROLLER", "Controller cleaned up");
+extern "C" void
+sc_controller_join(struct sc_controller *controller) {
+    (void)controller;
+}
+
+extern "C" bool
+sc_controller_push_msg(struct sc_controller *controller,
+                       const struct sc_control_msg *msg) {
+    if (controller->stopped || controller->control_socket == SC_SOCKET_NONE) {
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(controller->mutex);
+    
+    static uint8_t serialized_msg[SC_CONTROL_MSG_MAX_SIZE];
+    size_t length = sc_control_msg_serialize(msg, serialized_msg);
+    if (!length) {
+        return false;
+    }
+
+    ssize_t w = net_send_all(controller->control_socket, serialized_msg, length);
+    return (size_t)w == length;
 }

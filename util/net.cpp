@@ -327,3 +327,37 @@ bool net_set_tcp_nodelay(sc_socket socket, bool tcp_nodelay)
 	assert(ret == 0);
 	return true;
 }
+
+ssize_t net_send_all(sc_socket socket, const void *buf, size_t len)
+{
+	if (socket == SC_SOCKET_NONE) {
+		return -1;
+	}
+	sc_raw_socket raw_sock = unwrap(socket);
+	if (raw_sock == SC_RAW_SOCKET_NONE) {
+		return -1;
+	}
+	size_t total = 0;
+	const char *p = (const char *)buf;
+	while (total < len) {
+		int r = send(raw_sock, p + total, (int)(len - total), 0);
+		if (r < 0) {
+#ifdef _WIN32
+			int err = WSAGetLastError();
+			if (err == WSAEINTR) {
+				continue;
+			}
+#else
+			if (errno == EINTR) {
+				continue;
+			}
+#endif
+			return -1;
+		}
+		if (r == 0) {
+			return total;
+		}
+		total += r;
+	}
+	return total;
+}

@@ -57,6 +57,13 @@ scrcpy::scrcpy(obs_data_t *, obs_source_t *source_) : source(source_) {
 
 scrcpy::~scrcpy()
 {
+	if (controller_started) {
+		sc_controller_stop(&this->controller);
+		sc_controller_join(&this->controller);
+	}
+	if (controller_initialized) {
+		sc_controller_destroy(&this->controller);
+	}
 	if (server_started) {
 		this->server.server_stop();
 	}
@@ -196,6 +203,16 @@ void scrcpy::update(obs_data_t *settings)
 		return;
 	}
 
+	if (controller_started) {
+		sc_controller_stop(&this->controller);
+		sc_controller_join(&this->controller);
+		controller_started = false;
+	}
+	if (controller_initialized) {
+		sc_controller_destroy(&this->controller);
+		controller_initialized = false;
+	}
+
 	if (video_demuxer_started) {
 		this->video_demuxer.join();
 		video_demuxer_started = false;
@@ -253,6 +270,25 @@ void scrcpy::update(obs_data_t *settings)
 		blog(LOG_ERROR, "Failed to start video demuxer");
 	} else {
 		video_demuxer_started = true;
+	}
+
+	if (params.control) {
+		static const struct sc_controller_callbacks controller_cbs = {
+			&scrcpy::sc_controller_on_ended,
+		};
+		if (!sc_controller_init(&this->controller, this->server.m_control_socket, &controller_cbs, this)) {
+			blog(LOG_ERROR, "Failed to initialize controller");
+			return;
+		}
+		controller_initialized = true;
+
+		sc_controller_configure(&this->controller, NULL, NULL);
+
+		if (!sc_controller_start(&this->controller)) {
+			blog(LOG_ERROR, "Failed to start controller");
+			return;
+		}
+		controller_started = true;
 	}
 }
 
@@ -405,4 +441,250 @@ uint32_t scrcpy::generate_scid()
 	sc_rand rand;
 	// Only use 31 bits to avoid issues with signed values on the Java-side
 	return rand.sc_rand_u32() & 0x7FFFFFFF;
+}
+
+#include "util/net.h"
+
+static enum android_keycode vk_to_android_keycode(uint32_t vk) {
+    if (vk >= 'A' && vk <= 'Z') {
+        return (enum android_keycode)(AKEYCODE_A + (vk - 'A'));
+    }
+    if (vk >= '0' && vk <= '9') {
+        return (enum android_keycode)(AKEYCODE_0 + (vk - '0'));
+    }
+    if (vk >= 0x60 && vk <= 0x69) { // NUMPAD_0 - NUMPAD_9
+        return (enum android_keycode)(AKEYCODE_NUMPAD_0 + (vk - 0x60));
+    }
+    switch (vk) {
+        case 0x08: return AKEYCODE_DEL; // VK_BACK
+        case 0x09: return AKEYCODE_TAB; // VK_TAB
+        case 0x0D: return AKEYCODE_ENTER; // VK_RETURN
+        case 0x12: return AKEYCODE_ALT_LEFT; // VK_MENU (Alt)
+        case 0x13: return AKEYCODE_BREAK; // VK_PAUSE
+        case 0x14: return AKEYCODE_CAPS_LOCK; // VK_CAPITAL
+        case 0x1B: return AKEYCODE_ESCAPE; // VK_ESCAPE
+        case 0x20: return AKEYCODE_SPACE; // VK_SPACE
+        case 0x21: return AKEYCODE_PAGE_UP; // VK_PRIOR (Page Up)
+        case 0x22: return AKEYCODE_PAGE_DOWN; // VK_NEXT (Page Down)
+        case 0x23: return AKEYCODE_MOVE_END; // VK_END
+        case 0x24: return AKEYCODE_MOVE_HOME; // VK_HOME
+        case 0x25: return AKEYCODE_DPAD_LEFT; // VK_LEFT
+        case 0x26: return AKEYCODE_DPAD_UP; // VK_UP
+        case 0x27: return AKEYCODE_DPAD_RIGHT; // VK_RIGHT
+        case 0x28: return AKEYCODE_DPAD_DOWN; // VK_DOWN
+        case 0x2C: return AKEYCODE_SYSRQ; // VK_SNAPSHOT (Print Screen)
+        case 0x2D: return AKEYCODE_INSERT; // VK_INSERT
+        case 0x2E: return AKEYCODE_FORWARD_DEL; // VK_DELETE
+        case 0x5B: return AKEYCODE_META_LEFT; // VK_LWIN
+        case 0x5C: return AKEYCODE_META_RIGHT; // VK_RWIN
+        case 0x10:
+        case 0xA0: return AKEYCODE_SHIFT_LEFT; // VK_LSHIFT
+        case 0xA1: return AKEYCODE_SHIFT_RIGHT; // VK_RSHIFT
+        case 0x11:
+        case 0xA2: return AKEYCODE_CTRL_LEFT; // VK_LCONTROL
+        case 0xA3: return AKEYCODE_CTRL_RIGHT; // VK_RCONTROL
+        case 0x90: return AKEYCODE_NUM_LOCK; // VK_NUMLOCK
+        case 0x91: return AKEYCODE_SCROLL_LOCK; // VK_SCROLL
+        case 0x70: return AKEYCODE_F1;
+        case 0x71: return AKEYCODE_F2;
+        case 0x72: return AKEYCODE_F3;
+        case 0x73: return AKEYCODE_F4;
+        case 0x74: return AKEYCODE_F5;
+        case 0x75: return AKEYCODE_F6;
+        case 0x76: return AKEYCODE_F7;
+        case 0x77: return AKEYCODE_F8;
+        case 0x78: return AKEYCODE_F9;
+        case 0x79: return AKEYCODE_F10;
+        case 0x7A: return AKEYCODE_F11;
+        case 0x7B: return AKEYCODE_F12;
+        case 0x6F: return AKEYCODE_NUMPAD_DIVIDE;
+        case 0x6A: return AKEYCODE_NUMPAD_MULTIPLY;
+        case 0x6D: return AKEYCODE_NUMPAD_SUBTRACT;
+        case 0x6B: return AKEYCODE_NUMPAD_ADD;
+        case 0x6E: return AKEYCODE_NUMPAD_DOT;
+        case 0xBA: return AKEYCODE_SEMICOLON;
+        case 0xBB: return AKEYCODE_EQUALS;
+        case 0xBC: return AKEYCODE_COMMA;
+        case 0xBD: return AKEYCODE_MINUS;
+        case 0xBE: return AKEYCODE_PERIOD;
+        case 0xBF: return AKEYCODE_SLASH;
+        case 0xC0: return AKEYCODE_GRAVE;
+        case 0xDB: return AKEYCODE_LEFT_BRACKET;
+        case 0xDC: return AKEYCODE_BACKSLASH;
+        case 0xDD: return AKEYCODE_RIGHT_BRACKET;
+        case 0xDE: return AKEYCODE_APOSTROPHE;
+        default: return AKEYCODE_UNKNOWN;
+    }
+}
+
+static uint32_t obs_modifiers_to_android_metastate(uint32_t modifiers) {
+    uint32_t state = 0;
+    if (modifiers & INTERACT_SHIFT_KEY) {
+        state |= AMETA_SHIFT_ON;
+    }
+    if (modifiers & INTERACT_CONTROL_KEY) {
+        state |= AMETA_CTRL_ON;
+    }
+    if (modifiers & INTERACT_ALT_KEY) {
+        state |= AMETA_ALT_ON;
+    }
+    if (modifiers & INTERACT_COMMAND_KEY) {
+        state |= AMETA_META_ON;
+    }
+    if (modifiers & INTERACT_CAPS_KEY) {
+        state |= AMETA_CAPS_LOCK_ON;
+    }
+    if (modifiers & INTERACT_NUMLOCK_KEY) {
+        state |= AMETA_NUM_LOCK_ON;
+    }
+    return state;
+}
+
+bool scrcpy::send_control_msg(const sc_control_msg &msg)
+{
+	if (!controller_initialized || !controller_started) {
+		return false;
+	}
+	return sc_controller_push_msg(&this->controller, &msg);
+}
+
+void scrcpy::send_mouse_click(const obs_mouse_event *event, int32_t type, bool mouse_up, uint8_t click_count)
+{
+	(void)click_count;
+	sc_control_msg msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.type = SC_CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT;
+
+	uint32_t action_button = 0;
+	if (type == MOUSE_LEFT) {
+		action_button = AMOTION_EVENT_BUTTON_PRIMARY;
+	} else if (type == MOUSE_MIDDLE) {
+		action_button = AMOTION_EVENT_BUTTON_TERTIARY;
+	} else if (type == MOUSE_RIGHT) {
+		action_button = AMOTION_EVENT_BUTTON_SECONDARY;
+	}
+
+	msg.inject_touch_event.action = mouse_up ? AMOTION_EVENT_ACTION_UP : AMOTION_EVENT_ACTION_DOWN;
+	msg.inject_touch_event.pointer_id = SC_POINTER_ID_MOUSE;
+	msg.inject_touch_event.position.screen_size.width = (uint16_t)(width > 0 ? width : 1080);
+	msg.inject_touch_event.position.screen_size.height = (uint16_t)(height > 0 ? height : 1920);
+	msg.inject_touch_event.position.point.x = event->x;
+	msg.inject_touch_event.position.point.y = event->y;
+	msg.inject_touch_event.pressure = mouse_up ? 0.0f : 1.0f;
+	msg.inject_touch_event.action_button = (android_motionevent_buttons)action_button;
+
+	uint32_t buttons = 0;
+	if (event->modifiers & INTERACT_MOUSE_LEFT) {
+		buttons |= AMOTION_EVENT_BUTTON_PRIMARY;
+	}
+	if (event->modifiers & INTERACT_MOUSE_MIDDLE) {
+		buttons |= AMOTION_EVENT_BUTTON_TERTIARY;
+	}
+	if (event->modifiers & INTERACT_MOUSE_RIGHT) {
+		buttons |= AMOTION_EVENT_BUTTON_SECONDARY;
+	}
+
+	if (mouse_up) {
+		buttons &= ~action_button;
+	} else {
+		buttons |= action_button;
+	}
+	msg.inject_touch_event.buttons = (android_motionevent_buttons)buttons;
+
+	send_control_msg(msg);
+}
+
+void scrcpy::send_mouse_move(const obs_mouse_event *event, bool mouse_leave)
+{
+	if (mouse_leave) {
+		return;
+	}
+	sc_control_msg msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.type = SC_CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT;
+	msg.inject_touch_event.action = AMOTION_EVENT_ACTION_HOVER_MOVE;
+	msg.inject_touch_event.pointer_id = SC_POINTER_ID_MOUSE;
+	msg.inject_touch_event.position.screen_size.width = (uint16_t)(width > 0 ? width : 1080);
+	msg.inject_touch_event.position.screen_size.height = (uint16_t)(height > 0 ? height : 1920);
+	msg.inject_touch_event.position.point.x = event->x;
+	msg.inject_touch_event.position.point.y = event->y;
+	msg.inject_touch_event.pressure = 0.0f;
+	msg.inject_touch_event.action_button = (android_motionevent_buttons)0;
+
+	uint32_t buttons = 0;
+	if (event->modifiers & INTERACT_MOUSE_LEFT) {
+		buttons |= AMOTION_EVENT_BUTTON_PRIMARY;
+	}
+	if (event->modifiers & INTERACT_MOUSE_MIDDLE) {
+		buttons |= AMOTION_EVENT_BUTTON_TERTIARY;
+	}
+	if (event->modifiers & INTERACT_MOUSE_RIGHT) {
+		buttons |= AMOTION_EVENT_BUTTON_SECONDARY;
+	}
+	msg.inject_touch_event.buttons = (android_motionevent_buttons)buttons;
+
+	if (buttons != 0) {
+		msg.inject_touch_event.action = AMOTION_EVENT_ACTION_MOVE;
+		msg.inject_touch_event.pressure = 1.0f;
+	}
+
+	send_control_msg(msg);
+}
+
+void scrcpy::send_mouse_wheel(const obs_mouse_event *event, int x_delta, int y_delta)
+{
+	sc_control_msg msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.type = SC_CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT;
+	msg.inject_scroll_event.position.screen_size.width = (uint16_t)(width > 0 ? width : 1080);
+	msg.inject_scroll_event.position.screen_size.height = (uint16_t)(height > 0 ? height : 1920);
+	msg.inject_scroll_event.position.point.x = event->x;
+	msg.inject_scroll_event.position.point.y = event->y;
+	msg.inject_scroll_event.hscroll = (float)x_delta / 120.0f;
+	msg.inject_scroll_event.vscroll = (float)y_delta / 120.0f;
+
+	uint32_t buttons = 0;
+	if (event->modifiers & INTERACT_MOUSE_LEFT) {
+		buttons |= AMOTION_EVENT_BUTTON_PRIMARY;
+	}
+	if (event->modifiers & INTERACT_MOUSE_MIDDLE) {
+		buttons |= AMOTION_EVENT_BUTTON_TERTIARY;
+	}
+	if (event->modifiers & INTERACT_MOUSE_RIGHT) {
+		buttons |= AMOTION_EVENT_BUTTON_SECONDARY;
+	}
+	msg.inject_scroll_event.buttons = (android_motionevent_buttons)buttons;
+
+	send_control_msg(msg);
+}
+
+void scrcpy::send_key_click(const obs_key_event *event, bool key_up)
+{
+	enum android_keycode keycode = vk_to_android_keycode(event->native_vkey);
+	if (event->text && strlen(event->text) > 0 && (event->native_vkey == 0xE5 || (unsigned char)event->text[0] > 127)) {
+		if (!key_up) {
+			sc_control_msg text_msg;
+			memset(&text_msg, 0, sizeof(text_msg));
+			text_msg.type = SC_CONTROL_MSG_TYPE_INJECT_TEXT;
+			text_msg.inject_text.text = _strdup(event->text);
+			send_control_msg(text_msg);
+			sc_control_msg_destroy(&text_msg);
+		}
+	} else if (keycode != AKEYCODE_UNKNOWN) {
+		sc_control_msg msg;
+		memset(&msg, 0, sizeof(msg));
+		msg.type = SC_CONTROL_MSG_TYPE_INJECT_KEYCODE;
+		msg.inject_keycode.action = key_up ? AKEY_EVENT_ACTION_UP : AKEY_EVENT_ACTION_DOWN;
+		msg.inject_keycode.keycode = keycode;
+		msg.inject_keycode.repeat = 0;
+		msg.inject_keycode.metastate = (android_metastate)obs_modifiers_to_android_metastate(event->modifiers);
+		send_control_msg(msg);
+	}
+}
+
+void scrcpy::sc_controller_on_ended(struct sc_controller *controller, bool error, void *userdata)
+{
+	(void)controller;
+	(void)userdata;
+	blog(LOG_INFO, "srccpy controller ended (error=%d)", error);
 }

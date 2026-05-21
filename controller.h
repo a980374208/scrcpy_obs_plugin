@@ -1,25 +1,63 @@
 #ifndef SCRCPY_CONTROLLER_H
 #define SCRCPY_CONTROLLER_H
 
-#include "common.h"
+#include "util/net.h"
+#include "control_msg.h"
+#include <stdbool.h>
 
-// 控制器结构
-typedef struct {
-	DeviceInfo *device;
-	socket_t control_socket;
-	int running;
-} Controller;
+#ifdef __cplusplus
+#include <mutex>
+#endif
 
-// 初始化控制器
-int controller_init(Controller *ctrl, DeviceInfo *device);
+struct sc_controller;
 
-// 启动控制器
-int controller_start(Controller *ctrl);
+struct sc_controller_callbacks {
+    void (*on_ended)(struct sc_controller *controller, bool error,
+                     void *userdata);
+};
 
-// 停止控制器
-void controller_stop(Controller *ctrl);
+struct sc_controller {
+    sc_socket control_socket;
+    bool stopped;
+    const struct sc_controller_callbacks *cbs;
+    void *cbs_userdata;
+#ifdef __cplusplus
+    std::mutex mutex;
+#endif
+};
 
-// 清理控制器
-void controller_cleanup(Controller *ctrl);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+bool
+sc_controller_init(struct sc_controller *controller, sc_socket control_socket,
+                   const struct sc_controller_callbacks *cbs,
+                   void *cbs_userdata);
+
+void
+sc_controller_configure(struct sc_controller *controller,
+                        void *acksync,
+                        void *uhid_devices);
+
+void
+sc_controller_destroy(struct sc_controller *controller);
+
+bool
+sc_controller_start(struct sc_controller *controller);
+
+void
+sc_controller_stop(struct sc_controller *controller);
+
+void
+sc_controller_join(struct sc_controller *controller);
+
+bool
+sc_controller_push_msg(struct sc_controller *controller,
+                       const struct sc_control_msg *msg);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // SCRCPY_CONTROLLER_H

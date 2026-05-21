@@ -89,6 +89,8 @@ ssize_t net_recv(sc_socket socket, void *buf, size_t len);
 
 ssize_t net_recv_all(sc_socket socket, void *buf, size_t len);
 
+ssize_t net_send_all(sc_socket socket, const void *buf, size_t len);
+
 bool net_set_tcp_nodelay(sc_socket socket, bool tcp_nodelay);
 
 #endif // SCRCPY_NET_H

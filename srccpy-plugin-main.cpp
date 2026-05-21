@@ -244,7 +244,7 @@ void register_srccpy()
 
 	info.id = "srccpy_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE,
+	info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE | OBS_SOURCE_INTERACTION;
 	info.get_properties = scrcpy_source_get_properties;
 	info.get_defaults = srccpy_source_get_defaults;
 	info.icon_type = OBS_ICON_TYPE_BROWSER;
@@ -284,6 +284,19 @@ void register_srccpy()
 	};
 	info.deactivate = [](void *data) {
 		//static_cast<BrowserSource *>(data)->SetActive(false);
+	};
+
+	info.mouse_click = [](void *data, const struct obs_mouse_event *event, int32_t type, bool mouse_up, uint32_t click_count) {
+		static_cast<scrcpy *>(data)->send_mouse_click(event, type, mouse_up, static_cast<uint8_t>(click_count));
+	};
+	info.mouse_move = [](void *data, const struct obs_mouse_event *event, bool mouse_leave) {
+		static_cast<scrcpy *>(data)->send_mouse_move(event, mouse_leave);
+	};
+	info.mouse_wheel = [](void *data, const struct obs_mouse_event *event, int x_delta, int y_delta) {
+		static_cast<scrcpy *>(data)->send_mouse_wheel(event, x_delta, y_delta);
+	};
+	info.key_click = [](void *data, const struct obs_key_event *event, bool key_up) {
+		static_cast<scrcpy *>(data)->send_key_click(event, key_up);
 	};
 
 	obs_register_source(&info);
