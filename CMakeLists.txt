@@ -3,13 +3,11 @@ cmake_minimum_required(VERSION 3.28...3.30)
 add_library(plugin-srccpy MODULE)
 add_library(OBS::srccpy ALIAS plugin-srccpy)
 set(CORE_SOURCES
-    common.cpp
-    net.cpp
+    
+   
     device.cpp
     controller.cpp
-    str_util.cpp
     srccpy.cpp
-    env.cpp
     server/server.cpp
     server/sc_server_cmd_builder.cpp
     adb/adb.cpp
@@ -19,12 +17,16 @@ set(CORE_SOURCES
     util/rand.cpp
     util/sc_intr.cpp
     util/tick.cpp
+    util/str_util.cpp
     util/sc_file.cpp
     util/sc_log.cpp
     util/options.cpp
     util/sc_thread.cpp
     util/sc_process.cpp
     util/process_intr.cpp
+    util/common.cpp
+    util/net.cpp
+    util/env.cpp
     event/sc_event.cpp
     codec/demuxer.cpp
     codec/packet_source.cpp
@@ -35,25 +37,26 @@ set(CORE_SOURCES
 
 # 头文件列表
 set(CORE_HEADERS
-    common.h
-    net.h
+
     device.h
     controller.h
-    str_util.h
     compat.h
     srccpy.hpp
-    env.h
     server/server.hpp
     server/sc_server_cmd_builder.hpp
     adb/adb.h
     adb/adb_tunnel.h
     adb/adb_device.h
     adb/adb_parser.h
+    util/str_util.h
     util/rand.h
     util/sc_intr.h
     util/tick.h
     util/sc_file.h
     util/sc_log.h
+    util/env.h
+    util/common.h
+    util/net.h
     util/options.h
     util/sc_thread.h
     util/sc_process.h

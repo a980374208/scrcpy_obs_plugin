@@ -93,9 +93,8 @@ sc_server::~sc_server()
 	sc_thread_join(m_thread, nullptr);
 }
 
-bool sc_server::server_init(const sc_server_params *params, const sc_server_callbacks *cbs, void *cbs_userdata)
+bool sc_server::server_init(const sc_server_callbacks *cbs, void *cbs_userdata)
 {
-	this->m_params = *params;
 
 	bool ok = sc_adb_init();
 	if (!ok) {
@@ -127,6 +126,11 @@ bool sc_server::server_init(const sc_server_params *params, const sc_server_call
 		selector.type = SC_ADB_DEVICE_SELECT_ALL;
 	}
 	return true;
+}
+
+void sc_server::update_params(const sc_server_params *params) {
+	this->m_params = *params;
+
 }
 
 bool sc_server::server_start()

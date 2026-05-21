@@ -314,6 +314,7 @@ struct scrcpy_options {
 #define SC_OPTION_LIST_CAMERAS 0x4
 #define SC_OPTION_LIST_CAMERA_SIZES 0x8
 #define SC_OPTION_LIST_APPS 0x10
+#define SC_OPTION_LIST_DEVICE_INFOS 0x20
 	uint8_t list;
 	bool window;
 	bool mouse_hover;

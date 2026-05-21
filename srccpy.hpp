@@ -18,12 +18,17 @@ enum scrcpy_exit_code {
 	SCRCPY_EXIT_DISCONNECTED,
 };
 
-class srccpy {
+class scrcpy {
 public:
-	srccpy(obs_data_t *, obs_source_t *source_);
-	srccpy(const srccpy &) = delete;
-	~srccpy();
+	scrcpy(obs_data_t *, obs_source_t *source_);
+	scrcpy(const scrcpy &) = delete;
+	~scrcpy();
 	int srccpy_init();
+
+	void update(obs_data_t *settings);
+
+
+
 
 	static void sc_server_on_connection_failed(sc_server &server, void *userdata);
 
@@ -43,5 +48,8 @@ public:
 	sc_server server;
 	sc_demuxer video_demuxer;
 	sc_demuxer audio_demuxer;
+	struct sc_server_params params;
+	uint32_t width = 0;
+	uint32_t height = 0;
 };
 void register_srccpy();

@@ -1,265 +1,197 @@
 #include "packet_sink.h"
+#include "../srccpy.hpp"
 #include <iostream>
 #include <cstring>
+#include <media-io/video-io.h>
+#include <util/threading.h>
+#include <util/platform.h>
 
 // Initialize static ops structure
-const struct sc_packet_sink_ops sc_file_packet_sink::s_ops = {&sc_file_packet_sink::file_open,
-							      &sc_file_packet_sink::file_close,
-							      &sc_file_packet_sink::file_push,
-							      &sc_file_packet_sink::file_disable};
+const struct sc_packet_sink_ops sc_receive_packet_sink::s_ops = {&sc_receive_packet_sink::receive_init,
+							      &sc_receive_packet_sink::receive_end,
+							      &sc_receive_packet_sink::receive_push,
+							      &sc_receive_packet_sink::receive_disable};
 
-sc_file_packet_sink::sc_file_packet_sink(const std::string &filename, AVCodecID codec_id)
-	: m_filename(filename),
+sc_receive_packet_sink::sc_receive_packet_sink(scrcpy *sc, obs_source_t *source, AVCodecID codec_id):
+	  m_scrcpy(sc),
+	  m_source(source),
 	  m_codec_id(codec_id),
 	  m_codec_ctx(nullptr),
+	  m_frame(nullptr),
 	  m_is_video(false),
-	  m_packet_count(0),
-	  m_aac_profile(2),       // AAC-LC
-	  m_sample_rate_index(4), // 48000 Hz
-	  m_channels(2)           // Stereo
+	  m_packet_count(0)
 {
 	// Set the ops pointer to our static ops structure
 	this->ops = &s_ops;
-}
-
-sc_file_packet_sink::~sc_file_packet_sink()
-{
-	if (m_file.is_open()) {
-		m_file.close();
+	m_frame = av_frame_alloc();
+	if (!m_frame) {
+		std::cerr << "Failed to allocate AVFrame" << std::endl;
 	}
 }
 
-bool sc_file_packet_sink::file_open(std::shared_ptr<sc_packet_sink> sink, AVCodecContext *ctx)
+sc_receive_packet_sink::~sc_receive_packet_sink()
 {
-	std::shared_ptr<sc_file_packet_sink> file_sink = std::static_pointer_cast<sc_file_packet_sink>(sink);
+	if (m_frame) {
+		av_frame_free(&m_frame);
+	}
+}
+
+bool sc_receive_packet_sink::receive_init(std::shared_ptr<sc_packet_sink> sink, AVCodecContext *ctx)
+{
+	std::shared_ptr<sc_receive_packet_sink> file_sink = std::static_pointer_cast<sc_receive_packet_sink>(sink);
 
 	file_sink->m_codec_ctx = ctx;
 	file_sink->m_is_video = (ctx->codec_type == AVMEDIA_TYPE_VIDEO);
 
-	// Determine file extension based on codec
-	std::string actual_filename = file_sink->m_filename;
-	if (actual_filename.find('.') == std::string::npos) {
-		// Add appropriate extension if not present
-		switch (file_sink->m_codec_id) {
-		case AV_CODEC_ID_H264:
-			actual_filename += ".h264";
-			break;
-		case AV_CODEC_ID_HEVC:
-			actual_filename += ".h265";
-			break;
-		case AV_CODEC_ID_AAC:
-			actual_filename += ".aac";
-			break;
-		case AV_CODEC_ID_OPUS:
-			actual_filename += ".opus";
-			break;
-		default:
-			actual_filename += ".bin";
-			break;
-		}
-	}
-
-	// Open file for writing in binary mode
-	file_sink->m_file.open(actual_filename, std::ios::binary);
-	if (!file_sink->m_file.is_open()) {
-		std::cerr << "Failed to open file for writing: " << actual_filename << std::endl;
-		return false;
-	}
-
-	// Initialize AAC parameters from codec context
-	if (file_sink->m_codec_id == AV_CODEC_ID_AAC) {
-		// Get sample rate index
-		int sample_rate = ctx->sample_rate;
-		switch (sample_rate) {
-		case 96000:
-			file_sink->m_sample_rate_index = 0;
-			break;
-		case 88200:
-			file_sink->m_sample_rate_index = 1;
-			break;
-		case 64000:
-			file_sink->m_sample_rate_index = 2;
-			break;
-		case 48000:
-			file_sink->m_sample_rate_index = 3;
-			break;
-		case 44100:
-			file_sink->m_sample_rate_index = 4;
-			break;
-		case 32000:
-			file_sink->m_sample_rate_index = 5;
-			break;
-		case 24000:
-			file_sink->m_sample_rate_index = 6;
-			break;
-		case 22050:
-			file_sink->m_sample_rate_index = 7;
-			break;
-		case 16000:
-			file_sink->m_sample_rate_index = 8;
-			break;
-		case 12000:
-			file_sink->m_sample_rate_index = 9;
-			break;
-		case 11025:
-			file_sink->m_sample_rate_index = 10;
-			break;
-		case 8000:
-			file_sink->m_sample_rate_index = 11;
-			break;
-		default:
-			file_sink->m_sample_rate_index = 4; // Default to 48000
-			break;
-		}
-
-#ifdef SCRCPY_LAVU_HAS_CHLAYOUT
-		file_sink->m_channels = ctx->ch_layout.nb_channels;
-#else
-		// For FFmpeg 59+, ch_layout is always available
-		file_sink->m_channels = ctx->ch_layout.nb_channels;
-#endif
-
-		std::cout << "AAC parameters: sample_rate=" << sample_rate << ", channels=" << file_sink->m_channels
-			  << ", profile=" << file_sink->m_aac_profile << std::endl;
-	}
-
-	std::cout << "File packet sink opened: " << actual_filename
-		  << " (codec: " << avcodec_get_name(file_sink->m_codec_id) << ")" << std::endl;
+	std::cout << "Packet sink opened (codec: " << avcodec_get_name(file_sink->m_codec_id) << ")" << std::endl;
 	return true;
 }
 
-void sc_file_packet_sink::file_close(std::shared_ptr<sc_packet_sink> sink)
+void sc_receive_packet_sink::receive_end(std::shared_ptr<sc_packet_sink> sink)
 {
-	std::shared_ptr<sc_file_packet_sink> file_sink = std::static_pointer_cast<sc_file_packet_sink>(sink);
-
-	if (file_sink->m_file.is_open()) {
-		file_sink->m_file.close();
-		std::cout << "File packet sink closed. Total packets saved: " << file_sink->m_packet_count << std::endl;
-	}
-
+	std::shared_ptr<sc_receive_packet_sink> file_sink = std::static_pointer_cast<sc_receive_packet_sink>(sink);
 	file_sink->m_codec_ctx = nullptr;
 }
 
-bool sc_file_packet_sink::file_push(std::shared_ptr<sc_packet_sink> sink, const AVPacket *packet)
+bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, const AVPacket *packet)
 {
-	std::shared_ptr<sc_file_packet_sink> file_sink = std::static_pointer_cast<sc_file_packet_sink>(sink);
+	std::shared_ptr<sc_receive_packet_sink> file_sink = std::static_pointer_cast<sc_receive_packet_sink>(sink);
 
-	if (!file_sink->m_file.is_open()) {
-		std::cerr << "File not open for writing" << std::endl;
+	if (!file_sink->m_is_video || !file_sink->m_codec_ctx || !file_sink->m_frame) {
+		return true; // Ignore if not video, or not fully initialized
+	}
+
+	int ret = avcodec_send_packet(file_sink->m_codec_ctx, packet);
+	if (ret < 0) {
+		std::cerr << "avcodec_send_packet failed: " << ret << std::endl;
 		return false;
 	}
 
-	// Write based on codec type
-	switch (file_sink->m_codec_id) {
-	case AV_CODEC_ID_H264:
-	case AV_CODEC_ID_HEVC:
-		file_sink->write_h264_h265(packet);
-		break;
-	case AV_CODEC_ID_AAC:
-		file_sink->write_aac(packet);
-		break;
-	default:
-		// For other codecs, write raw data
-		if (packet->size > 0 && packet->data) {
-			file_sink->m_file.write(reinterpret_cast<const char *>(packet->data), packet->size);
+	while (avcodec_receive_frame(file_sink->m_codec_ctx, file_sink->m_frame) == 0) {
+		if (file_sink->m_scrcpy) {
+			if (file_sink->m_scrcpy->width == 0 || file_sink->m_scrcpy->height == 0) {
+				file_sink->m_scrcpy->width = file_sink->m_frame->width;
+				file_sink->m_scrcpy->height = file_sink->m_frame->height;
+			}
 		}
-		break;
-	}
 
-	file_sink->m_packet_count++;
+		struct obs_source_frame obs_frame = {0};
 
-	// Flush every 100 packets to ensure data is written
-	if (file_sink->m_packet_count % 100 == 0) {
-		file_sink->m_file.flush();
+		for (size_t i = 0; i < MAX_AV_PLANES; i++) {
+			obs_frame.data[i] = file_sink->m_frame->data[i];
+			obs_frame.linesize[i] = file_sink->m_frame->linesize[i];
+		}
+
+		obs_frame.width = file_sink->m_frame->width;
+		obs_frame.height = file_sink->m_frame->height;
+
+		obs_frame.timestamp = os_gettime_ns();
+		/*if (file_sink->m_frame->pts != AV_NOPTS_VALUE) {
+			obs_frame.timestamp = file_sink->m_frame->pts * 1000;
+		} else {
+			obs_frame.timestamp = os_gettime_ns();
+		}*/
+
+		enum video_format format = VIDEO_FORMAT_NONE;
+		switch (file_sink->m_frame->format) {
+		case AV_PIX_FMT_YUV420P:
+			format = VIDEO_FORMAT_I420;
+			break;
+		case AV_PIX_FMT_NV12:
+			format = VIDEO_FORMAT_NV12;
+			break;
+		case AV_PIX_FMT_YUYV422:
+			format = VIDEO_FORMAT_YUY2;
+			break;
+		case AV_PIX_FMT_UYVY422:
+			format = VIDEO_FORMAT_UYVY;
+			break;
+		case AV_PIX_FMT_YUV444P:
+			format = VIDEO_FORMAT_I444;
+			break;
+		case AV_PIX_FMT_RGBA:
+			format = VIDEO_FORMAT_RGBA;
+			break;
+		case AV_PIX_FMT_BGRA:
+			format = VIDEO_FORMAT_BGRA;
+			break;
+		case AV_PIX_FMT_BGR0:
+			format = VIDEO_FORMAT_BGRX;
+			break;
+		default:
+			format = VIDEO_FORMAT_NONE;
+			break;
+		}
+		obs_frame.format = format;
+
+		if (format != VIDEO_FORMAT_NONE) {
+			enum video_colorspace colorspace = VIDEO_CS_DEFAULT;
+			switch (file_sink->m_frame->colorspace) {
+			case AVCOL_SPC_BT709:
+				colorspace = (file_sink->m_frame->color_trc == AVCOL_TRC_IEC61966_2_1) ? VIDEO_CS_SRGB : VIDEO_CS_709;
+				break;
+			case AVCOL_SPC_FCC:
+			case AVCOL_SPC_BT470BG:
+			case AVCOL_SPC_SMPTE170M:
+			case AVCOL_SPC_SMPTE240M:
+				colorspace = VIDEO_CS_601;
+				break;
+			case AVCOL_SPC_BT2020_NCL:
+				colorspace = (file_sink->m_frame->color_trc == AVCOL_TRC_ARIB_STD_B67) ? VIDEO_CS_2100_HLG : VIDEO_CS_2100_PQ;
+				break;
+			default:
+				colorspace = (file_sink->m_frame->color_primaries == AVCOL_PRI_BT2020)
+								 ? ((file_sink->m_frame->color_trc == AVCOL_TRC_ARIB_STD_B67) ? VIDEO_CS_2100_HLG : VIDEO_CS_2100_PQ)
+								 : VIDEO_CS_DEFAULT;
+				break;
+			}
+
+			enum video_range_type range = (file_sink->m_frame->color_range == AVCOL_RANGE_JPEG) ? VIDEO_RANGE_FULL : VIDEO_RANGE_DEFAULT;
+			obs_frame.full_range = (range == VIDEO_RANGE_FULL);
+
+			video_format_get_parameters_for_format(
+				colorspace,
+				range,
+				format,
+				obs_frame.color_matrix,
+				obs_frame.color_range_min,
+				obs_frame.color_range_max
+			);
+
+			switch (file_sink->m_frame->color_trc) {
+			case AVCOL_TRC_BT709:
+			case AVCOL_TRC_GAMMA22:
+			case AVCOL_TRC_GAMMA28:
+			case AVCOL_TRC_SMPTE170M:
+			case AVCOL_TRC_SMPTE240M:
+			case AVCOL_TRC_IEC61966_2_1:
+				obs_frame.trc = VIDEO_TRC_SRGB;
+				break;
+			case AVCOL_TRC_SMPTE2084:
+				obs_frame.trc = VIDEO_TRC_PQ;
+				break;
+			case AVCOL_TRC_ARIB_STD_B67:
+				obs_frame.trc = VIDEO_TRC_HLG;
+				break;
+			default:
+				obs_frame.trc = VIDEO_TRC_DEFAULT;
+				break;
+			}
+
+			obs_frame.flip = (file_sink->m_frame->linesize[0] < 0);
+			obs_frame.flags = 0;
+
+			obs_source_output_video(file_sink->m_source, &obs_frame);
+		}
+
+		av_frame_unref(file_sink->m_frame);
 	}
 
 	return true;
 }
 
-void sc_file_packet_sink::write_h264_h265(const AVPacket *packet)
+void sc_receive_packet_sink::receive_disable(std::shared_ptr<sc_packet_sink> sink)
 {
-	// H.264/H.265 packets from scrcpy already have start codes (0x00000001)
-	// Just write the raw packet data
-	if (packet->size > 0 && packet->data) {
-		m_file.write(reinterpret_cast<const char *>(packet->data), packet->size);
-	}
-}
-
-void sc_file_packet_sink::write_aac(const AVPacket *packet)
-{
-	if (packet->size <= 0 || !packet->data) {
-		return;
-	}
-
-	// AAC packets from scrcpy are raw AAC frames (without ADTS header)
-	// We need to add ADTS header before each frame
-
-	int frame_size = packet->size;
-	int adts_header_size = 7; // ADTS header size
-	int total_size = frame_size + adts_header_size;
-
-	// Create ADTS header
-	uint8_t adts_header[7];
-	create_adts_header(adts_header, total_size, m_aac_profile, m_sample_rate_index, m_channels);
-
-	// Write ADTS header
-	m_file.write(reinterpret_cast<const char *>(adts_header), adts_header_size);
-
-	// Write AAC frame data
-	m_file.write(reinterpret_cast<const char *>(packet->data), frame_size);
-}
-
-void sc_file_packet_sink::create_adts_header(uint8_t *header, int aac_frame_length, int profile, int sample_rate_index,
-					     int channels)
-{
-	// ADTS header structure (7 bytes, no CRC)
-	// See ISO/IEC 13818-7 for details
-
-	memset(header, 0, 7);
-
-	// Syncword (12 bits): 0xFFF
-	header[0] = 0xFF;
-	header[1] = 0xF0;
-
-	// ID (1 bit): 0 for MPEG-4
-	// Layer (2 bits): 00
-	// Protection absent (1 bit): 1 (no CRC)
-	header[1] |= 0x00; // Already set above
-
-	// Profile (2 bits): AAC profile - 1
-	// Sample rate index (4 bits)
-	// Private bit (1 bit): 0
-	header[2] = ((profile - 1) & 0x03) << 6;
-	header[2] |= (sample_rate_index & 0x0F) << 2;
-
-	// Private bit (1 bit): 0
-	// Channel configuration (3 bits)
-	header[3] = (channels & 0x07) << 4;
-
-	// Original/copy (1 bit): 0
-	// Home (1 bit): 0
-	// Copyrighted id bit (1 bit): 0
-	// Copyrighted id start (1 bit): 0
-
-	// Frame length (13 bits)
-	header[3] |= ((aac_frame_length >> 11) & 0x03);
-	header[4] = ((aac_frame_length >> 3) & 0xFF);
-	header[5] = ((aac_frame_length & 0x07) << 5);
-
-	// Buffer fullness (11 bits): 0x7FF for variable bitrate
-	header[5] |= 0x1F;
-	header[6] = 0xFC;
-
-	// Number of AAC frames (RDBs) in ADTS frame minus 1 (2 bits): 00
-	header[6] |= 0x00;
-}
-
-void sc_file_packet_sink::file_disable(std::shared_ptr<sc_packet_sink> sink)
-{
-	std::shared_ptr<sc_file_packet_sink> file_sink = std::static_pointer_cast<sc_file_packet_sink>(sink);
-	std::cout << "File packet sink disabled" << std::endl;
-
-	if (file_sink->m_file.is_open()) {
-		file_sink->m_file.close();
-	}
+	(void)sink;
+	std::cout << "Packet sink disabled" << std::endl;
 }

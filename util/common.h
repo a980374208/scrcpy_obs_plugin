@@ -29,4 +29,7 @@ typedef struct {
 	int height;
 } DeviceInfo;
 
+
+
+
 #endif // SCRCPY_COMMON_H

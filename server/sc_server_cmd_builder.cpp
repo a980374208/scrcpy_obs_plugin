@@ -241,6 +241,8 @@ bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunne
 		add("list_camera_sizes=", "true");
 	if (p.list & SC_OPTION_LIST_APPS)
 		add("list_apps=", "true");
+	if (p.list & SC_OPTION_LIST_DEVICE_INFOS)
+		add("list_device_infos=", "true");
 
 	return true;
 }

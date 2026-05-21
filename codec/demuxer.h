@@ -3,7 +3,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
-#include "net.h"
+#include "util/net.h"
 #include "codec/packet_source.h"
 
 #define SCRCPY_LAVU_HAS_CHLAYOUT //!!!!!!!!!!!!!!@jbb

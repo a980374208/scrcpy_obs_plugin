@@ -6,6 +6,7 @@
 #include "codec/packet_sink.h"
 #include <thread>
 #include <obs-source.h>
+#include "util/str_util.h"
 
 static bool await_for_signal(ServerConnectSignal &signal)
 {
@@ -47,12 +48,11 @@ static void sc_audio_demuxer_on_ended(sc_demuxer *demuxer, enum sc_demuxer_statu
 	}
 }
 
-srccpy::srccpy(obs_data_t *, obs_source_t *source_) {
+scrcpy::scrcpy(obs_data_t *, obs_source_t *source_) : source(source_) {
 	srccpy_init();
-
 }
 
-srccpy::~srccpy()
+scrcpy::~scrcpy()
 {
 	if (video_demuxer_started) {
 		this->video_demuxer.join();
@@ -62,144 +62,148 @@ srccpy::~srccpy()
 	}
 }
 
-int srccpy::srccpy_init()
+int scrcpy::srccpy_init()
 {
 	uint32_t scid = generate_scid();
 
 	enum scrcpy_exit_code ret = SCRCPY_EXIT_FAILURE;
 
-	static const struct sc_server_callbacks cbs = {&srccpy::sc_server_on_connection_failed,
-						       &srccpy::sc_server_on_connected,
-						       &srccpy::sc_server_on_disconnected};
-	struct sc_server_params *pm = (struct sc_server_params *)malloc(sizeof(struct sc_server_params));
-	memset(pm, 0, sizeof(pm));
-	pm->scid = scid;
-	pm->req_serial = nullptr;
+	static const struct sc_server_callbacks cbs = {&scrcpy::sc_server_on_connection_failed,
+						       &scrcpy::sc_server_on_connected,
+						       &scrcpy::sc_server_on_disconnected};
+	params.scid = scid;
+	params.req_serial = nullptr;
+	params.log_level = SC_LOG_LEVEL_DEBUG;
+	params.video_codec = SC_CODEC_H264;
+	params.audio_codec = SC_CODEC_OPUS;
+	params.video_source = SC_VIDEO_SOURCE_DISPLAY;
+	params.audio_source = SC_AUDIO_SOURCE_MIC;
+	params.camera_facing = SC_CAMERA_FACING_FRONT;
+	params.crop = nullptr;
+	params.video_codec_options = nullptr;
+	params.audio_codec_options = nullptr;
+	params.video_encoder = nullptr;
+	params.audio_encoder = nullptr;
+	params.camera_id = nullptr;
+	params.camera_size = nullptr;
+	params.camera_ar = nullptr;
+	params.camera_fps = 0;
+	params.port_range.first = 27183;
+	params.port_range.last = 27199;
+	params.tunnel_host = 0;
+	params.tunnel_port = 0;
+	params.max_size = 0;
+	params.video_bit_rate = 0;
+	params.audio_bit_rate = 0;
+	params.max_fps = nullptr;
+	params.angle = nullptr;
+	params.screen_off_timeout = -1;
+	params.capture_orientation = SC_ORIENTATION_0;
+	params.capture_orientation_lock = SC_ORIENTATION_UNLOCKED;
+	params.control = false;
+	params.display_id = 0;
+	params.new_display = nullptr;
+	params.display_ime_policy = SC_DISPLAY_IME_POLICY_UNDEFINED;
+	params.video = true;
+	params.audio = false;
+	params.audio_dup = false;
+	params.show_touches = false;
+	params.stay_awake = false;
+	params.force_adb_forward = false;
+	params.power_off_on_close = false;
+	params.clipboard_autosync = true;
+	params.downsize_on_error = true;
+	params.tcpip = false;
+	params.tcpip_dst = nullptr;
+	params.select_usb = false;
+	params.cleanup = true;
+	params.power_on = true;
+	params.kill_adb_on_close = false;
+	params.camera_high_speed = false;
+	params.vd_destroy_content = true;
+	params.list = 0;
 
-	pm->log_level = SC_LOG_LEVEL_DEBUG;
-	pm->video_codec = SC_CODEC_H264;
-	pm->audio_codec = SC_CODEC_OPUS;
-	pm->video_source = SC_VIDEO_SOURCE_DISPLAY;
-	pm->audio_source = SC_AUDIO_SOURCE_MIC;
-	pm->camera_facing = SC_CAMERA_FACING_FRONT;
-	pm->crop = nullptr;
-	pm->video_codec_options = nullptr;
-	pm->audio_codec_options = nullptr;
-	pm->video_encoder = nullptr;
-	pm->audio_encoder = nullptr;
-	pm->camera_id = nullptr;
-	pm->camera_size = nullptr;
-	pm->camera_ar = nullptr;
-	pm->camera_fps = 0;
-	pm->port_range.first = 27183;
-	pm->port_range.last = 27199;
-	pm->tunnel_host = 0;
-	pm->tunnel_port = 0;
-	pm->max_size = 0;
-	pm->video_bit_rate = 0;
-	pm->audio_bit_rate = 0;
-	pm->max_fps = nullptr;
-	pm->angle = nullptr;
-	pm->screen_off_timeout = -1;
-	pm->capture_orientation = SC_ORIENTATION_0;
-	pm->capture_orientation_lock = SC_ORIENTATION_UNLOCKED;
-	pm->control = false;
-	pm->display_id = 0;
-	pm->new_display = nullptr;
-	pm->display_ime_policy = SC_DISPLAY_IME_POLICY_UNDEFINED;
-	pm->video = true;
-	pm->audio = true;
-	pm->audio_dup = false;
-	pm->show_touches = false;
-	pm->stay_awake = false;
-	pm->force_adb_forward = false;
-	pm->power_off_on_close = false;
-	pm->clipboard_autosync = true;
-	pm->downsize_on_error = true;
-	pm->tcpip = false;
-	pm->tcpip_dst = nullptr;
-	pm->select_usb = false;
-	pm->cleanup = true;
-	pm->power_on = true;
-	pm->kill_adb_on_close = false;
-	pm->camera_high_speed = false;
-	pm->vd_destroy_content = true;
-	pm->list = 0;
-
-	if (!server.server_init(pm, &cbs, this)) {
+	if (!server.server_init(&cbs, this)) {
 		return SCRCPY_EXIT_FAILURE;
 	}
-	//if (!server.server_start()) {
-	//	// goto end;
-	//}
-
-	//bool connected = await_for_signal(server.m_connect_signal);
-	//if (!connected) {
-	//	// LOGE("Server connection failed");
-	//	// goto end;
-	//}
-
-	// 创建音视频流接收及解复用线程并初始化
-
-	//if (options.video) {
-	//	std::shared_ptr<sc_demuxer_callbacks> video_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
-
-	//	video_demuxer_cbs->on_ended = sc_video_demuxer_on_ended;
-	//	this->video_demuxer.init("video", this->server.m_video_socket, video_demuxer_cbs, NULL);
-
-	//	// 添加文件保存 sink（H.264 格式）
-	//	auto file_sink = std::make_shared<sc_file_packet_sink>("video_stream", AV_CODEC_ID_H264);
-	//	this->video_demuxer.packet_source.add_sink(file_sink);
-	//}
-
-	//if (options.audio) {
-	//	std::shared_ptr<sc_demuxer_callbacks> audio_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
-	//	audio_demuxer_cbs->on_ended = sc_audio_demuxer_on_ended;
-
-	//	this->audio_demuxer.init("audio", this->server.m_audio_socket, audio_demuxer_cbs, (void *)&options);
-
-	//	// 添加文件保存 sink（Opus 格式）
-	//	auto file_sink = std::make_shared<sc_file_packet_sink>("audio_stream", AV_CODEC_ID_OPUS);
-	//	this->audio_demuxer.packet_source.add_sink(file_sink);
-	//}
-
-	/////**************************************解码逻辑待编写
-	////**********************************************************************/
-
-	////启动音视频流接收及解复用
-	//if (options.video) {
-	//	if (!this->video_demuxer.start()) {
-	//		// goto end;
-	//	}
-	//	video_demuxer_started = true;
-	//}
-
-	//if (options.audio) {
-	//	if (!this->audio_demuxer.start()) {
-	//		// goto end;
-	//	}
-	//	audio_demuxer_started = true;
-	//}
 
 	return 0;
 }
 
-void srccpy::sc_server_on_connection_failed(sc_server &server, void *userdata)
+void scrcpy::update(obs_data_t *settings)
+{
+	if (settings) {
+		std::string select_device,select_res;
+		int choose_src, choose_camera, max_fps;
+		select_device = obs_data_get_string(settings, "device_list");
+		select_res = obs_data_get_string(settings, "choose_res");
+		choose_src = (int)obs_data_get_int(settings, "choose_src");
+		choose_camera = (int)obs_data_get_int(settings, "choose_camera");
+		max_fps = (int)obs_data_get_int(settings, "max_fps");
+		auto device = DecodeDevice(select_device);
+
+		params.req_serial = device.device.serial.c_str();
+		params.camera_facing = static_cast<enum sc_camera_facing>(choose_camera);
+		params.video_source = static_cast<enum sc_video_source>(choose_src);
+		static std::string fps_str;
+		fps_str = std::to_string(max_fps);
+		params.max_fps = fps_str.c_str();
+		params.camera_size = select_res.c_str();
+		int cx = 0, cy = 0;
+		ResolutionValid(select_res, cx, cy);
+		params.max_size = cx;
+		
+		server.update_params(&params);
+	}
+	server.server_start();
+	bool connected = await_for_signal(server.m_connect_signal);
+	if (!connected) {
+		blog(LOG_ERROR, "Server connection failed");
+		return;
+	}
+
+	if (video_demuxer_started) {
+		this->video_demuxer.join();
+		video_demuxer_started = false;
+	}
+
+	std::shared_ptr<sc_demuxer_callbacks> video_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
+	video_demuxer_cbs->on_ended = sc_video_demuxer_on_ended;
+	this->video_demuxer.init("video", this->server.m_video_socket, video_demuxer_cbs, NULL);
+
+	AVCodecID codec_id = AV_CODEC_ID_H264;
+	if (params.video_codec == SC_CODEC_H265) {
+		codec_id = AV_CODEC_ID_HEVC;
+	} else if (params.video_codec == SC_CODEC_AV1) {
+		codec_id = AV_CODEC_ID_AV1;
+	}
+
+	auto video_sink = std::make_shared<sc_receive_packet_sink>(this, this->source, codec_id);
+	this->video_demuxer.packet_source.add_sink(video_sink);
+
+	if (!this->video_demuxer.start()) {
+		blog(LOG_ERROR, "Failed to start video demuxer");
+	} else {
+		video_demuxer_started = true;
+	}
+}
+
+void scrcpy::sc_server_on_connection_failed(sc_server &server, void *userdata)
 {
 	server.m_connect_signal.promise.set_value(false);
 }
 
-void srccpy::sc_server_on_connected(sc_server &server, void *userdata)
+void scrcpy::sc_server_on_connected(sc_server &server, void *userdata)
 {
 	server.m_connect_signal.promise.set_value(true);
 }
 
-void srccpy::sc_server_on_disconnected(sc_server &server, void *userdata)
+void scrcpy::sc_server_on_disconnected(sc_server &server, void *userdata)
 {
 	// LOGD("Server disconnected");
 }
 
-uint32_t srccpy::generate_scid()
+uint32_t scrcpy::generate_scid()
 {
 	sc_rand rand;
 	// Only use 31 bits to avoid issues with signed values on the Java-side

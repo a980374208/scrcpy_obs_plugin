@@ -6,6 +6,8 @@ extern "C" {
 #include <fstream>
 #include <cstdint>
 
+#include <obs.h>
+
 struct sc_packet_sink_ops;
 struct sc_packet_sink {
 	const struct sc_packet_sink_ops *ops;
@@ -28,35 +30,26 @@ struct sc_packet_sink_ops {
 	void (*disable)(std::shared_ptr<sc_packet_sink>);
 };
 
-// File saver packet sink - saves packets in playable format
-class sc_file_packet_sink : public sc_packet_sink {
+class scrcpy;
+
+class sc_receive_packet_sink : public sc_packet_sink {
 public:
-	sc_file_packet_sink(const std::string &filename, AVCodecID codec_id);
-	~sc_file_packet_sink();
+	sc_receive_packet_sink(scrcpy *sc, obs_source_t *source, AVCodecID codec_id);
+	~sc_receive_packet_sink();
 
 private:
-	static bool file_open(std::shared_ptr<sc_packet_sink>, AVCodecContext *ctx);
-	static void file_close(std::shared_ptr<sc_packet_sink>);
-	static bool file_push(std::shared_ptr<sc_packet_sink>, const AVPacket *packet);
-	static void file_disable(std::shared_ptr<sc_packet_sink>);
+	static bool receive_init(std::shared_ptr<sc_packet_sink>, AVCodecContext *ctx);
+	static void receive_end(std::shared_ptr<sc_packet_sink>);
+	static bool receive_push(std::shared_ptr<sc_packet_sink>, const AVPacket *packet);
+	static void receive_disable(std::shared_ptr<sc_packet_sink>);
 
-	// Helper functions for different formats
-	void write_h264_h265(const AVPacket *packet);
-	void write_aac(const AVPacket *packet);
-	void create_adts_header(uint8_t *header, int aac_frame_length, int profile, int sample_rate_index,
-				int channels);
-
-	std::string m_filename;
-	std::ofstream m_file;
+	scrcpy *m_scrcpy;
+	obs_source_t *m_source;
 	AVCodecID m_codec_id;
 	AVCodecContext *m_codec_ctx;
+	AVFrame *m_frame;
 	bool m_is_video;
 	uint32_t m_packet_count;
-
-	// AAC specific
-	int m_aac_profile;
-	int m_sample_rate_index;
-	int m_channels;
 
 	static const struct sc_packet_sink_ops s_ops;
 };

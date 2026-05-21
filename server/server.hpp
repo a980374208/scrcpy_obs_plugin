@@ -105,8 +105,10 @@ public:
 
 	~sc_server();
 
-	bool server_init(const struct sc_server_params *params, const struct sc_server_callbacks *cbs,
+	bool server_init(const struct sc_server_callbacks *cbs,
 			 void *cbs_userdata);
+
+	void update_params(const sc_server_params *params);
 
 	bool server_start();
 

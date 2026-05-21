@@ -9,11 +9,21 @@
 
 #define SC_ADB_COMMAND(...) { sc_adb_get_executable(), __VA_ARGS__ }
 
-    const char *DEVICE_INFO = "shell sh -c \""
-        "printf 'VENDOR=%s\\n' \\\"$(getprop ro.product.vendor.marketname)\\\"; "
-        "printf 'ODM=%s\\n' \\\"$(getprop ro.product.odm.marketname)\\\"; "
-        "wm size | head -n 1"
-        "\"";
+// 纯双引号包裹，利用手机自带的 sh 顺次执行
+// 完美适配 Windows CreateProcess 的单行多命令组合
+// 完美保留 Key=Value 格式，且彻底兼容 Windows 管道读取
+const char *DEVICE_INFO =
+	"shell \""
+	"echo VENDOR=$(getprop ro.product.marketname); "
+	"echo ODM=$(getprop ro.product.model); "
+	"wm size | head -n 1; "
+	"echo renderFrameRate=$(dumpsys display 2>/dev/null | grep -o renderFrameRate.[0-9.]* | head -n 1 | awk '{print $2}'); "
+	"if dumpsys media.camera | grep -q 'Facing: EXTERNAL'; then "
+	"   echo EXTERNAL=true; "
+	"else "
+	"   echo EXTERNAL=false; "
+	"fi"
+	"\"";
 
 static std::string adb_executable = "";
 
@@ -126,21 +136,27 @@ bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_i
 	std::vector<char> buf(BUFSIZE);
 	sc_vec_adb_devices devices;
 	bool ok = sc_adb_list_devices(intr, flags, devices);
+	if (!ok) {
+		return ok;
+	}
 	out_vec.reserve(devices.size());
 
 	size_t r; 
 	std::string tmp = {DEVICE_INFO};
 	for (auto &device : devices) {
 		std::string shell = " -s " + device.serial + " " + tmp;
-		ok = sc_adb_get_device_info(buf, intr, flags, r, DEVICE_INFO);
+		ok = sc_adb_get_device_info(buf, intr, flags, r, shell.c_str());
 		std::string out(buf.data(), r);
 		// 解析输出
 		std::string vendor;
 		std::string odm;
 		std::string wm;
+		int fps = 60;
+		bool has_external = false;
+
 		std::istringstream iss(out);
 		std::string line;
-
+		
 		auto trim = [](std::string &s) {
 			while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
 				s.pop_back();
@@ -167,12 +183,22 @@ bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_i
 						trim(wm);
 					}
 				}
+			} else if (line.rfind("renderFrameRate=", 0) == 0) {
+				std::string fps_str = line.substr(16);
+				trim(fps_str);
+				fps = static_cast<int>(std::round(std::stof(fps_str)));
+			} else if (line.rfind("EXTERNAL=", 0) == 0) {
+				std::string tmp = line.substr(9);
+				trim(tmp);
+				std::transform(tmp.begin(), tmp.end(), tmp.begin(), ::tolower);
+				has_external = tmp == "true";
 			}
 		}
 		out_vec.emplace_back(std::move(device),
-				     !odm.empty() ? std::move(odm)
-						  : (!vendor.empty() ? std::move(vendor) : std::move(device.model)), //表达式调用时会先计算每个参数实际值再传值 std::move(device.model)安全
-				     std::move(wm));
+			!vendor.empty()
+				? std::move(vendor)
+						  : (!odm.empty() ? std::move(odm) : std::move(device.model)), //表达式调用时会先计算每个参数实际值再传值 std::move(device.model)安全
+			std::move(wm), fps, has_external);
 	}
 	return ok;
 	

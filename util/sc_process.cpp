@@ -98,6 +98,7 @@ sc_process_result sc_process_execute_p(const std::vector<std::string> commands, 
 	LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList = NULL;
 	BOOL bInheritHandles = false;
 	DWORD dwCreationFlags = 0;
+	dwCreationFlags |= CREATE_NO_WINDOW;
 	BOOL ok = false;
 	if (pin) {
 		if (!CreatePipe(&stdin_read_handle, pin, &sa, 0)) {

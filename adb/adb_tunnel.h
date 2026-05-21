@@ -1,5 +1,5 @@
 #pragma once
-#include "net.h"
+#include "util/net.h"
 #include "util/options.h"
 #include "util/sc_intr.h"
 class sc_adb_tunnel {
