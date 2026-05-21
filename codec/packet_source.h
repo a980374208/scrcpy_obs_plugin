@@ -27,6 +27,7 @@ public:
 	void add_sink(std::shared_ptr<sc_packet_sink> sink);
 	bool open_sinks(AVCodecContext *ctx);
 	void close_sinks();
+	void clear_sinks();
 	bool push_packet(const AVPacket *packet);
 	void disable_sinks();
 

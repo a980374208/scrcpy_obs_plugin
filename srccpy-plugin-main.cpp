@@ -20,7 +20,7 @@ static void srccpy_source_get_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "choose_res", "1920x1080");
 	obs_data_set_default_int(settings, "choose_src", SC_VIDEO_SOURCE_DISPLAY);
-	obs_data_set_default_int(settings, "max_fps", 60);
+	obs_data_set_default_int(settings, "max_fps", 30);
 }
 
 static const sc_adb_device_info get_scrcpy_device_info(scrcpy *sc, obs_properties_t *props, obs_data_t *settings)
@@ -244,8 +244,7 @@ void register_srccpy()
 
 	info.id = "srccpy_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
-			    OBS_SOURCE_CONTROLLABLE_MEDIA,
+	info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE,
 	info.get_properties = scrcpy_source_get_properties;
 	info.get_defaults = srccpy_source_get_defaults;
 	info.icon_type = OBS_ICON_TYPE_BROWSER;
@@ -257,7 +256,7 @@ void register_srccpy()
 		return new scrcpy(settings, source);
 	};
 	info.destroy = [](void *data) {
-		//static_cast<BrowserSource *>(data)->Destroy();
+		delete static_cast<scrcpy *>(data);
 	};
 	info.update = [](void *data, obs_data_t *settings) {
 		static_cast<scrcpy *>(data)->update(settings);

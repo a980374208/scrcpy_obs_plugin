@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <memory>
+#include <string>
 #include "util/sc_thread.h"
 #include "util/sc_intr.h"
 #include "adb/adb_tunnel.h"
@@ -40,21 +41,21 @@ struct sc_server_info {
 
 struct sc_server_params {
 	uint32_t scid;
-	const char *req_serial;
+	std::string req_serial;
 	enum sc_log_level log_level;
 	enum sc_codec video_codec;
 	enum sc_codec audio_codec;
 	enum sc_video_source video_source;
 	enum sc_audio_source audio_source;
 	enum sc_camera_facing camera_facing;
-	const char *crop;
-	const char *video_codec_options;
-	const char *audio_codec_options;
-	const char *video_encoder;
-	const char *audio_encoder;
-	const char *camera_id;
-	const char *camera_size;
-	const char *camera_ar;
+	std::string crop;
+	std::string video_codec_options;
+	std::string audio_codec_options;
+	std::string video_encoder;
+	std::string audio_encoder;
+	std::string camera_id;
+	std::string camera_size;
+	std::string camera_ar;
 	uint16_t camera_fps;
 	struct sc_port_range port_range;
 	uint32_t tunnel_host;
@@ -62,14 +63,14 @@ struct sc_server_params {
 	uint16_t max_size;
 	uint32_t video_bit_rate;
 	uint32_t audio_bit_rate;
-	const char *max_fps; // float to be parsed by the server
-	const char *angle;   // float to be parsed by the server
+	std::string max_fps; // float to be parsed by the server
+	std::string angle;   // float to be parsed by the server
 	sc_tick screen_off_timeout;
 	enum sc_orientation capture_orientation;
 	enum sc_orientation_lock capture_orientation_lock;
 	bool control;
 	uint32_t display_id;
-	const char *new_display;
+	std::string new_display;
 	enum sc_display_ime_policy display_ime_policy;
 	bool video;
 	bool audio;
@@ -81,7 +82,7 @@ struct sc_server_params {
 	bool clipboard_autosync;
 	bool downsize_on_error;
 	bool tcpip;
-	const char *tcpip_dst;
+	std::string tcpip_dst;
 	bool select_usb;
 	bool select_tcpip;
 	bool cleanup;
@@ -111,6 +112,8 @@ public:
 	void update_params(const sc_server_params *params);
 
 	bool server_start();
+
+	void server_stop();
 
 	bool push_server(sc_intr &intr, const std::string &serial);
 

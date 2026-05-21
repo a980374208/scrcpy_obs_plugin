@@ -57,6 +57,9 @@ scrcpy::scrcpy(obs_data_t *, obs_source_t *source_) : source(source_) {
 
 scrcpy::~scrcpy()
 {
+	if (server_started) {
+		this->server.server_stop();
+	}
 	if (video_demuxer_started) {
 		this->video_demuxer.join();
 	}
@@ -75,21 +78,21 @@ int scrcpy::srccpy_init()
 						       &scrcpy::sc_server_on_connected,
 						       &scrcpy::sc_server_on_disconnected};
 	params.scid = scid;
-	params.req_serial = nullptr;
+	params.req_serial = "";
 	params.log_level = SC_LOG_LEVEL_DEBUG;
 	params.video_codec = SC_CODEC_H264;
 	params.audio_codec = SC_CODEC_OPUS;
 	params.video_source = SC_VIDEO_SOURCE_DISPLAY;
 	params.audio_source = SC_AUDIO_SOURCE_MIC;
 	params.camera_facing = SC_CAMERA_FACING_FRONT;
-	params.crop = nullptr;
-	params.video_codec_options = nullptr;
-	params.audio_codec_options = nullptr;
-	params.video_encoder = nullptr;
-	params.audio_encoder = nullptr;
-	params.camera_id = nullptr;
-	params.camera_size = nullptr;
-	params.camera_ar = nullptr;
+	params.crop = "";
+	params.video_codec_options = "";
+	params.audio_codec_options = "";
+	params.video_encoder = "";
+	params.audio_encoder = "";
+	params.camera_id = "";
+	params.camera_size = "";
+	params.camera_ar = "";
 	params.camera_fps = 0;
 	params.port_range.first = 27183;
 	params.port_range.last = 27199;
@@ -98,14 +101,14 @@ int scrcpy::srccpy_init()
 	params.max_size = 0;
 	params.video_bit_rate = 0;
 	params.audio_bit_rate = 0;
-	params.max_fps = nullptr;
-	params.angle = nullptr;
+	params.max_fps = "";
+	params.angle = "";
 	params.screen_off_timeout = -1;
 	params.capture_orientation = SC_ORIENTATION_0;
 	params.capture_orientation_lock = SC_ORIENTATION_UNLOCKED;
 	params.control = false;
 	params.display_id = 0;
-	params.new_display = nullptr;
+	params.new_display = "";
 	params.display_ime_policy = SC_DISPLAY_IME_POLICY_UNDEFINED;
 	params.video = true;
 	params.audio = false;
@@ -117,7 +120,7 @@ int scrcpy::srccpy_init()
 	params.clipboard_autosync = true;
 	params.downsize_on_error = true;
 	params.tcpip = false;
-	params.tcpip_dst = nullptr;
+	params.tcpip_dst = "";
 	params.select_usb = false;
 	params.cleanup = true;
 	params.power_on = true;
@@ -138,29 +141,88 @@ int scrcpy::srccpy_init()
 
 void scrcpy::update(obs_data_t *settings)
 {
+	bool updated = false;
 	if (settings) {
-		std::string select_device,select_res;
-		int choose_src, choose_camera, max_fps;
+		std::string select_device, select_res, choose_capture;
+		sc_video_source choose_src;
+		int max_fps;
 		select_device = obs_data_get_string(settings, "device_list");
 		select_res = obs_data_get_string(settings, "choose_res");
-		choose_src = (int)obs_data_get_int(settings, "choose_src");
-		choose_camera = (int)obs_data_get_int(settings, "choose_camera");
-		max_fps = (int)obs_data_get_int(settings, "max_fps");
+		choose_src = static_cast<enum sc_video_source>(obs_data_get_int(settings, "choose_src"));
+		choose_capture = obs_data_get_string(settings, "choose_capture");
+		max_fps = (int)obs_data_get_int(settings, "choose_fps");
+		if (params.req_serial != select_device) {
+			params.req_serial = select_device;
+			updated = true;
+		}
+		if (params.video_source != choose_src) {
+			params.video_source = (choose_src);
+			updated = true;
+		}
+		
+		if (params.video_source == SC_VIDEO_SOURCE_DISPLAY) {
+			int id = std::stoi(choose_capture);
+			if (id != params.display_id) {
+				params.display_id = std::stoi(choose_capture);
+				updated = true;
 
-		params.req_serial = strdup(select_device.c_str());
-		params.camera_facing = static_cast<enum sc_camera_facing>(choose_camera);
-		params.video_source = static_cast<enum sc_video_source>(choose_src);
-		static std::string fps_str;
-		fps_str = std::to_string(max_fps);
-		params.max_fps = fps_str.c_str();
-		params.camera_size = select_res.c_str();
-		int cx = 0, cy = 0;
-		ResolutionValid(select_res, cx, cy);
-		params.max_size = cx;
+			}
+			int cx = 0, cy = 0;
+			ResolutionValid(select_res, cx, cy);
+			if (params.max_size != cx) {
+				params.max_size = cx;
+				updated = true;
+			}
+			
+		} else {
+			if (params.camera_id != choose_capture) {
+				params.camera_id = choose_capture;
+				updated = true;
+			}
+			if (params.camera_size != select_res) {
+				params.camera_size = select_res;
+				updated = true;
+			}
+			
+		}
+		if (params.max_fps != std::to_string(max_fps)) {
+			params.max_fps = std::to_string(max_fps);
+			updated = true;
+		}
 		
 		server.update_params(&params);
 	}
-	server.server_start();
+	if (!updated && server_started) {
+		return;
+	}
+
+	if (video_demuxer_started) {
+		this->video_demuxer.join();
+		video_demuxer_started = false;
+	}
+	if (audio_demuxer_started) {
+		this->audio_demuxer.join();
+		audio_demuxer_started = false;
+	}
+	if (this->server.m_video_socket != SC_SOCKET_NONE) {
+		net_close(this->server.m_video_socket);
+		this->server.m_video_socket = SC_SOCKET_NONE;
+	}
+	if (this->server.m_audio_socket != SC_SOCKET_NONE) {
+		net_close(this->server.m_audio_socket);
+		this->server.m_audio_socket = SC_SOCKET_NONE;
+	}
+	if (this->server.m_control_socket != SC_SOCKET_NONE) {
+		net_close(this->server.m_control_socket);
+		this->server.m_control_socket = SC_SOCKET_NONE;
+	}
+	if (server_started) {
+		this->server.server_stop();
+		server_started = false;
+	}
+
+
+	server_started = server.server_start();
 	bool connected = await_for_signal(server.m_connect_signal);
 	if (!connected) {
 		blog(LOG_ERROR, "Server connection failed");
@@ -183,6 +245,7 @@ void scrcpy::update(obs_data_t *settings)
 		codec_id = AV_CODEC_ID_AV1;
 	}
 
+	this->video_demuxer.packet_source.clear_sinks();
 	auto video_sink = std::make_shared<sc_receive_packet_sink>(this, this->source, codec_id);
 	this->video_demuxer.packet_source.add_sink(video_sink);
 
@@ -211,7 +274,9 @@ void scrcpy::get_device_infos(sc_vec_adb_device_infos &device_infos, std::string
 	size_t r;
 	buf.resize(BUFSIZE);
 	r = sc_pipe_read_all_intr(server.m_intr, pid, pout, buf.data(), BUFSIZE - 1);
+	sc_pipe_close(pout);
 	bool ok = process_check_success_intr(server.m_intr, pid, "adb -s SC_OPTION_LIST_DEVICE_INFOS", 0);
+
 	if (ok) {
 		std::string json_str(buf.data(), r);
 		try {

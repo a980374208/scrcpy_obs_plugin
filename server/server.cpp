@@ -90,8 +90,9 @@ sc_server::sc_server()
 
 sc_server::~sc_server()
 {
-	sc_thread_join(m_thread, nullptr);
+	
 }
+
 
 bool sc_server::server_init(const sc_server_callbacks *cbs, void *cbs_userdata)
 {
@@ -135,6 +136,10 @@ void sc_server::update_params(const sc_server_params *params) {
 
 bool sc_server::server_start()
 {
+	this->m_stopped = false;
+	this->m_intr.reset();
+	this->m_connect_signal.promise = std::promise<bool>();
+
 	bool ok = sc_thread_create(this->m_thread, run_server, "scrcpy-server", this);
 	if (!ok) {
 		//LOGE("Could not create server thread");
@@ -142,6 +147,31 @@ bool sc_server::server_start()
 	}
 
 	return true;
+}
+
+void sc_server::server_stop()
+{
+	{
+		std::unique_lock<sc_mutex> lock(this->m_mutex);
+		this->m_stopped = true;
+		sc_cond_signal(this->m_cond_stopped);
+		this->m_intr.intr_interrupt();
+	}
+	
+	sc_thread_join(this->m_thread, NULL);
+
+	if (this->m_video_socket != SC_SOCKET_NONE) {
+		net_close(this->m_video_socket);
+		this->m_video_socket = SC_SOCKET_NONE;
+	}
+	if (this->m_audio_socket != SC_SOCKET_NONE) {
+		net_close(this->m_audio_socket);
+		this->m_audio_socket = SC_SOCKET_NONE;
+	}
+	if (this->m_control_socket != SC_SOCKET_NONE) {
+		net_close(this->m_control_socket);
+		this->m_control_socket = SC_SOCKET_NONE;
+	}
 }
 
 bool sc_server::push_server(sc_intr &intr, const std::string &serial)
@@ -436,14 +466,13 @@ sc_socket sc_server::connect_to_server(unsigned attempts, sc_tick delay, uint32_
 bool sc_server::sc_server_sleep(sc_tick deadline)
 {
 	std::unique_lock<sc_mutex> lock(this->m_mutex);
-	while (!this->m_stopped) {
-		if (!sc_cond_timedwait(this->m_cond_stopped, this->m_mutex, deadline)) {
-			// 超时
-			return true; // 仍然在 sleep 状态
-		}
+	bool timed_out = false;
+	while (!this->m_stopped && !timed_out) {
+		timed_out = !sc_cond_timedwait(this->m_cond_stopped, this->m_mutex, deadline);
 	}
+	bool stopped = this->m_stopped;
 	// 被 stop 唤醒
-	return false;
+	return !stopped;
 }
 
 void sc_server::sc_server_kill_adb_if_requested()
@@ -456,10 +485,10 @@ void sc_server::sc_server_kill_adb_if_requested()
 }
 
 int sc_server::run_server(void *data)
-{
+{  
 	auto *server = static_cast<sc_server *>(data);
 	const auto &params = server->m_params;
-
+	
 	// 2. 选择设备
 	sc_adb_device_selector selector{};
 	if (const char *env_serial = getenv("ANDROID_SERIAL")) {
@@ -517,47 +546,58 @@ int sc_server::run_server(void *data)
 	};
 
 	try {
-		// 9. observer（RAII）
-		process_observer_raii observer(pid, server->m_listener, server);
-
-		// 10. 连接 server socket
-		if (!server->sc_server_connect_to(server->m_info)) {
-			server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
-			return -1;
-		}
-
-		// 11. 已连接
-		server->m_cbs->on_connected(*server, server->m_cbs_userdata);
-
-		// 12. 等待 stop
+		bool connect_ok = false;
 		{
-			std::lock_guard<sc_mutex> lock(server->m_mutex);
-			while (!server->m_stopped) {
-				sc_cond_wait(server->m_cond_stopped, server->m_mutex);
+			// 9. observer（RAII）
+			process_observer_raii observer(pid, server->m_listener, server);
+
+			// 10. 连接 server socket
+			if (server->sc_server_connect_to(server->m_info)) {
+				connect_ok = true;
+
+				// 11. 已连接
+				server->m_cbs->on_connected(*server, server->m_cbs_userdata);
+
+				// 12. 等待 stop
+				{
+					std::lock_guard<sc_mutex> lock(server->m_mutex);
+					while (!server->m_stopped) {
+						sc_cond_wait(server->m_cond_stopped, server->m_mutex);
+					}
+				}
+
+				// 13. 中断 socket
+				if (server->m_video_socket != SC_SOCKET_NONE)
+					net_interrupt(server->m_video_socket);
+				if (server->m_audio_socket != SC_SOCKET_NONE)
+					net_interrupt(server->m_audio_socket);
+				if (server->m_control_socket != SC_SOCKET_NONE)
+					net_interrupt(server->m_control_socket);
+
+				// 14. 等待 server 退出
+				sc_tick deadline = sc_tick_now() + SC_TICK_FROM_SEC(1);
+				if (!observer.timedwait(deadline)) {
+					sc_process_terminate(pid);
+				}
 			}
 		}
 
-		// 13. 中断 socket
-		if (server->m_video_socket != SC_SOCKET_NONE)
-			net_interrupt(server->m_video_socket);
-		if (server->m_audio_socket != SC_SOCKET_NONE)
-			net_interrupt(server->m_audio_socket);
-		if (server->m_control_socket != SC_SOCKET_NONE)
-			net_interrupt(server->m_control_socket);
-
-		// 14. 等待 server 退出
-		sc_tick deadline = sc_tick_now() + SC_TICK_FROM_SEC(1);
-		if (!observer.timedwait(deadline)) {
-			sc_process_terminate(pid);
+		if (!connect_ok) {
+			server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
+			sc_process_close(pid);
+			pid = SC_PROCESS_NONE;
+			return -1;
 		}
 
 		sc_process_close(pid);
+		pid = SC_PROCESS_NONE;
 		server->sc_server_kill_adb_if_requested();
 		return 0;
 	} catch (const std::exception &e) {
 		e;
 		sc_process_terminate(pid);
 		sc_process_wait(pid, true);
+		pid = SC_PROCESS_NONE;
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}

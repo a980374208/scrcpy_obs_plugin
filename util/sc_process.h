@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <mutex>
 #include "sc_thread.h"
 
 #ifdef _WIN32
@@ -106,6 +107,11 @@ public:
 	{
 		if (!valid_)
 			return;
+		{
+			std::lock_guard<sc_mutex> lock(observer_.mutex);
+			observer_.listener = nullptr;
+		}
+		sc_process_terminate(pid_);
 		sc_process_observer_join(observer_);
 		sc_process_observer_destroy(observer_);
 	}

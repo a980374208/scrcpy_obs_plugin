@@ -1,4 +1,4 @@
-﻿#include "sc_intr.h"
+#include "sc_intr.h"
 #include <assert.h>
 #include "net.h"
 
@@ -105,3 +105,12 @@ bool sc_intr::set_process(sc_pid pid)
 	}
 	return !interrupted;
 }
+
+void sc_intr::reset()
+{
+	std::lock_guard<sc_mutex> lock(this->mutex);
+	atomic_store_explicit(&this->interrupted, false, std::memory_order_relaxed);
+	this->socket = SC_SOCKET_NONE;
+	this->process = SC_PROCESS_NONE;
+}
+

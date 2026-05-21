@@ -140,9 +140,9 @@ bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunne
 	if (p.audio_dup)
 		add("audio_dup=", true);
 
-	if (p.max_fps && !add_validated("max_fps=", p.max_fps))
+	if (!p.max_fps.empty() && !add_validated("max_fps=", p.max_fps.c_str()))
 		return false;
-	if (p.angle && !add_validated("angle=", p.angle))
+	if (!p.angle.empty() && !add_validated("angle=", p.angle.c_str()))
 		return false;
 
 	// 屏幕方向捕获逻辑
@@ -161,7 +161,7 @@ bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunne
 			return false;
 	}
 
-	if (p.crop && !add_validated("crop=", p.crop))
+	if (!p.crop.empty() && !add_validated("crop=", p.crop.c_str()))
 		return false;
 
 	if (p.max_size)
@@ -170,13 +170,13 @@ bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunne
 	if (p.display_id)
 		add("display_id=", p.display_id);
 
-	if (p.camera_id && !add_validated("camera_id=", p.camera_id))
+	if (!p.camera_id.empty() && !add_validated("camera_id=", p.camera_id.c_str()))
 		return false;
-	if (p.camera_size && !add_validated("camera_size=", p.camera_size))
+	if (!p.camera_size.empty() && !add_validated("camera_size=", p.camera_size.c_str()))
 		return false;
 	if (p.camera_facing != SC_CAMERA_FACING_ANY)
 		add("camera_facing=", sc_server_get_camera_facing_name(p.camera_facing));
-	if (p.camera_ar && !add_validated("camera_ar=", p.camera_ar))
+	if (!p.camera_ar.empty() && !add_validated("camera_ar=", p.camera_ar.c_str()))
 		return false;
 
 	if (p.camera_fps)
@@ -194,19 +194,19 @@ bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunne
 		add("screen_off_timeout=", ms);
 	}
 
-	if (p.video_codec_options && !add_validated("video_codec_options=", p.video_codec_options)) {
+	if (!p.video_codec_options.empty() && !add_validated("video_codec_options=", p.video_codec_options.c_str())) {
 		return false;
 	}
 
-	if (p.audio_codec_options && !add_validated("audio_codec_options=", p.audio_codec_options)) {
+	if (!p.audio_codec_options.empty() && !add_validated("audio_codec_options=", p.audio_codec_options.c_str())) {
 		return false;
 	}
 
-	if (p.video_encoder && !add_validated("video_encoder=", p.video_encoder)) {
+	if (!p.video_encoder.empty() && !add_validated("video_encoder=", p.video_encoder.c_str())) {
 		return false;
 	}
 
-	if (p.audio_encoder && !add_validated("audio_encoder=", p.audio_encoder)) {
+	if (!p.audio_encoder.empty() && !add_validated("audio_encoder=", p.audio_encoder.c_str())) {
 		return false;
 	}
 
@@ -217,7 +217,7 @@ bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunne
 
 	add_bool("power_off_on_close=", p.power_off_on_close);
 
-	if (p.new_display && !add_validated("new_display=", p.new_display))
+	if (!p.new_display.empty() && !add_validated("new_display=", p.new_display.c_str()))
 		return false;
 
 	// 输入法策略

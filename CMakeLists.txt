@@ -80,6 +80,10 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "Source Files" FILES ${CO
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "Header Files" FILES ${CORE_HEADERS})
 configure_file(cmake/windows/obs-module.rc.in win-wasapi.rc)
 target_sources(plugin-srccpy PRIVATE win-wasapi.rc)
+target_include_directories(plugin-srccpy PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/util
+)
 
 target_link_libraries(plugin-srccpy PRIVATE
   OBS::libobs

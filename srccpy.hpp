@@ -47,6 +47,7 @@ private:
 
 	bool video_demuxer_started = false;
 	bool audio_demuxer_started = false;
+	bool server_started = false;
 	obs_source_t *source;
 
 

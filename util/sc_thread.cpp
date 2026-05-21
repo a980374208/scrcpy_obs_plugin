@@ -64,6 +64,10 @@ void sc_cond_wait(sc_cond &cond, sc_mutex &mutex)
 	cond.cond->wait(lock);
 
 	lock.release();
+
+#ifndef NDEBUG
+	mutex.locker_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+#endif
 }
 
 bool sc_cond_timedwait(sc_cond &cond, sc_mutex &mutex, sc_tick deadline)
@@ -100,7 +104,7 @@ bool sc_cond_timedwait(sc_cond &cond, sc_mutex &mutex, sc_tick deadline)
 void sc_thread_join(sc_thread &thread, int *status)
 {
 
-	if (thread.thread->joinable()) {
+	if (thread.thread && thread.thread->joinable()) {
 		thread.thread->join();
 	}
 
@@ -144,7 +148,10 @@ std::mutex &sc_mutex::native()
 	return *mutex_;
 }
 
+#ifndef NDEBUG
 bool sc_mutex::held() const
 {
 	return locker_.load(std::memory_order_relaxed) == std::this_thread::get_id();
 }
+#endif
+

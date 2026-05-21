@@ -46,9 +46,21 @@ bool sc_packet_source::push_packet(const AVPacket *packet)
 
 void sc_packet_source::close_sinks()
 {
-	assert(this->sink_count);
-	this->close_firsts_sinks(this->sink_count);
+	if (this->sink_count) {
+		this->close_firsts_sinks(this->sink_count);
+	}
+	
 }
+
+void sc_packet_source::clear_sinks()
+{
+	close_sinks();
+	for (unsigned i = 0; i < SC_PACKET_SOURCE_MAX_SINKS; ++i) {
+		this->sinks[i].reset();
+	}
+	this->sink_count = 0;
+}
+
 
 void sc_packet_source::disable_sinks()
 {

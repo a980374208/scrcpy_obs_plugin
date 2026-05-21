@@ -317,6 +317,7 @@ void sc_demuxer::init(const char *name, sc_socket socket, std::shared_ptr<sc_dem
 
 	this->cbs = callbacks;
 	this->cbs_userdata = cbs_userdata;
+	this->packet_source.clear_sinks();
 }
 
 bool sc_demuxer::start()

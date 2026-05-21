@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <atomic>
 #include <stdbool.h>
 #include "sc_process.h"
@@ -19,6 +19,8 @@ public:
 	sc_intr();
 
 public:
+	void reset();
+
 	bool set_process(sc_pid pid);
 
 	bool set_socket(sc_socket socket);
