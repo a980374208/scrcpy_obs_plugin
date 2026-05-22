@@ -4,6 +4,7 @@
 #include "sc_log.h"
 #include <cinttypes>
 
+static uint16_t laster_port = 0;
 sc_adb_tunnel::sc_adb_tunnel() : m_enabled(false), m_forward(false), m_server_socket(SC_SOCKET_NONE), m_local_port(0) {}
 
 bool sc_adb_tunnel::adb_tunnel_open(sc_intr &intr, const std::string &serial, const std::string &device_socket_name,
@@ -30,6 +31,9 @@ bool sc_adb_tunnel::enable_tunnel_reverse_any_port(sc_intr &intr, const std::str
 						   const sc_port_range &port_range)
 {
 	uint16_t port = port_range.first;
+	if (laster_port == port) {
+		port++;
+	}
 	for (;;) {
 		if (!sc_adb_reverse(intr, serial, device_socket_name, port, SC_ADB_NO_STDOUT)) {
 			// the command itself failed, it will fail on any port

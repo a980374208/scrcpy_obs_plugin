@@ -231,6 +231,7 @@ void sc_server::server_stop()
 		net_close(this->m_control_socket);
 		this->m_control_socket = SC_SOCKET_NONE;
 	}
+	pushed_serials.clear();
 }
 
 bool sc_server::push_server(sc_intr &intr, const std::string &serial)

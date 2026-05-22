@@ -252,11 +252,14 @@ void scrcpy::update(obs_data_t *settings)
 			updated = true;
 		}
 
-		server.update_params(&params);
+		
 	}
 	if (!updated && server_started) {
 		return;
 	}
+
+	params.scid = generate_scid();
+	server.update_params(&params);
 
 	if (controller_started) {
 		sc_controller_stop(&this->controller);
@@ -292,7 +295,6 @@ void scrcpy::update(obs_data_t *settings)
 		this->server.server_stop();
 		server_started = false;
 	}
-
 
 	server_started = server.server_start();
 	bool connected = await_for_signal(server.m_connect_signal);

@@ -69,7 +69,8 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 
 	while (avcodec_receive_frame(file_sink->m_codec_ctx, file_sink->m_frame) == 0) {
 		if (file_sink->m_scrcpy) {
-			if (file_sink->m_scrcpy->width == 0 || file_sink->m_scrcpy->height == 0) {
+			if (file_sink->m_scrcpy->width != file_sink->m_frame->width ||
+			    file_sink->m_scrcpy->height != file_sink->m_frame->height) {
 				file_sink->m_scrcpy->width = file_sink->m_frame->width;
 				file_sink->m_scrcpy->height = file_sink->m_frame->height;
 			}
