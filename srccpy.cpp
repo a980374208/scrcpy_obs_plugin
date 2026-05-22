@@ -912,9 +912,10 @@ void scrcpy::handle_error_message(const std::string &error_msg)
 {
 	try {
 		auto j = nlohmann::json::parse(error_msg);
-		int error_type = j.value("error_type", 0);
+		sc_error_type error_type = (sc_error_type)j.value("error_type", 0);
 		std::string error_text = j.value("error_text", "");
 		error("[scrcpy] Device control/capture error returned from server (type=%d): %s", error_type, error_text.c_str());
+
 	} catch (const std::exception &) {
 		error("[scrcpy] Device control/capture error returned from server (raw): %s", error_msg.c_str());
 	}
