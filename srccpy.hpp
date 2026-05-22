@@ -8,7 +8,7 @@
 #include <adb/adb_device.h>
 #include "control_msg.h"
 #include "controller.h"
-#include <mutex>
+#include "util/sc_thread.h"
 
 enum scrcpy_exit_code {
 	// Normal program termination
@@ -21,6 +21,13 @@ enum scrcpy_exit_code {
 	SCRCPY_EXIT_DISCONNECTED,
 };
 
+enum puse_stream_type {
+	PAUSE_AUDIO = 0,
+	PAUSE_VIDEO,
+	PAUSE_AUDIO_VIDEO,
+	NO_PAUSE = -1
+};
+
 class scrcpy {
 public:
 	scrcpy(obs_data_t *, obs_source_t *source_);
@@ -30,7 +37,7 @@ public:
 
 	void update(obs_data_t *settings);
 
-	void get_device_infos(sc_vec_adb_device_infos &device_infos,std::string &serial);
+	void get_device_infos(sc_vec_adb_device_infos &device_infos, const std::string &serial);
 
 	void update_device_infos(sc_vec_adb_device_infos &device_infos);
 
@@ -50,6 +57,7 @@ public:
 	void send_mouse_move(const obs_mouse_event *event, bool mouse_leave);
 	void send_mouse_wheel(const obs_mouse_event *event, int x_delta, int y_delta);
 	void send_key_click(const obs_key_event *event, bool key_up);
+	bool set_stream_paused(puse_stream_type stream_type, bool pause);
 
 private:
 	uint32_t generate_scid();
@@ -70,5 +78,16 @@ public:
 	struct sc_controller controller;
 	bool controller_initialized = false;
 	bool controller_started = false;
+	puse_stream_type stream_pause_type = NO_PAUSE;
+	bool request_device_info();
+
+private:
+	sc_mutex device_info_mutex;
+	sc_cond device_info_cond;
+	bool device_info_received = false;
+	void parse_and_update_device_info(const std::string &json_str);
+	static void sc_controller_on_device_info(struct sc_controller *controller, const char *json, void *userdata);
+	static void sc_controller_on_error_message(struct sc_controller *controller, const char *error_msg, void *userdata);
+	void handle_error_message(const std::string &error_msg);
 };
 void register_srccpy();

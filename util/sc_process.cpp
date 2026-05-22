@@ -2,13 +2,19 @@
 #include <assert.h>
 #include "str_util.h"
 #include "sc_thread.h"
+#include "sc_log.h"
 
 #define CMD_MAX_LEN 8192
 
 static int run_observer(void *data)
 {
 	struct sc_process_observer *observer = (struct sc_process_observer *)data;
-	sc_process_wait(observer->pid, false); // ignore exit code
+	sc_exit_code exit_code = sc_process_wait(observer->pid, false); 
+	if (exit_code != 0) {
+		scrcpy_log(LOG_WARNING, "Process exited with value %" SC_PRIexitcode, exit_code);
+	} else {
+		scrcpy_log(LOG_INFO, "Process exited with value 0");
+	}
 	{
 		std::lock_guard<sc_mutex> lock(observer->mutex);
 		observer->terminated = true;

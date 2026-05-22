@@ -344,10 +344,12 @@ ssize_t net_send_all(sc_socket socket, const void *buf, size_t len)
 		if (r < 0) {
 #ifdef _WIN32
 			int err = WSAGetLastError();
+			net_perror("net_send_all send");
 			if (err == WSAEINTR) {
 				continue;
 			}
 #else
+			net_perror("net_send_all send");
 			if (errno == EINTR) {
 				continue;
 			}

@@ -5,6 +5,7 @@
 #include <iostream>
 #include "util/binary.h"
 #include "packet_merge.h"
+#include "util/sc_log.h"
 
 #define SC_PACKET_HEADER_SIZE 12
 
@@ -31,7 +32,7 @@ static enum AVCodecID sc_demuxer_to_avcodec_id(uint32_t codec_id)
 #ifdef SCRCPY_LAVC_HAS_AV1
 		return AV_CODEC_ID_AV1;
 #else
-		//LOGE("AV1 not supported by this FFmpeg version");
+		error("AV1 not supported by this FFmpeg version");
 		return AV_CODEC_ID_NONE;
 #endif
 	case SC_CODEC_ID_OPUS:
@@ -43,7 +44,7 @@ static enum AVCodecID sc_demuxer_to_avcodec_id(uint32_t codec_id)
 	case SC_CODEC_ID_RAW:
 		return AV_CODEC_ID_PCM_S16LE;
 	default:
-		//LOGE("Unknown codec id 0x%08" PRIx32, codec_id);
+		error("Unknown codec id 0x%08" PRIx32, codec_id);
 		return AV_CODEC_ID_NONE;
 	}
 }
@@ -150,13 +151,13 @@ static int run_demuxer(void *data)
 
 	ok = sc_demuxer_recv_codec_id(*demuxer, &raw_codec_id);
 	if (!ok) {
-		blog(LOG_ERROR, "Demuxer '%s': stream disabled due to connection error",
+		error("Demuxer '%s': stream disabled due to connection error",
 		   demuxer->m_name);
 		goto end;
 	}
 
 	if (raw_codec_id == 0) {
-		blog(LOG_WARNING, "Demuxer '%s': stream explicitly disabled by the device",
+		scrcpy_log(LOG_WARNING, "Demuxer '%s': stream explicitly disabled by the device",
 		     demuxer->m_name);
 		demuxer->packet_source.disable_sinks();
 		status = SC_DEMUXER_STATUS_DISABLED;
@@ -164,14 +165,14 @@ static int run_demuxer(void *data)
 	}
 
 	if (raw_codec_id == 1) {
-		blog(LOG_ERROR, "Demuxer '%s': stream configuration error on the device",
+		error("Demuxer '%s': stream configuration error on the device",
 		    demuxer->m_name);
 		goto end;
 	}
 
 	codec_id = sc_demuxer_to_avcodec_id(raw_codec_id);
 	if (codec_id == AV_CODEC_ID_NONE) {
-		blog(LOG_ERROR, "Demuxer '%s': stream disabled due to unsupported codec",
+		error("Demuxer '%s': stream disabled due to unsupported codec",
 		    demuxer->m_name);
 		demuxer->packet_source.disable_sinks();
 		goto end;
@@ -179,7 +180,7 @@ static int run_demuxer(void *data)
 
 	codec = avcodec_find_decoder(codec_id);
 	if (!codec) {
-		blog(LOG_ERROR, "Demuxer '%s': stream disabled due to missing decoder",
+		error("Demuxer '%s': stream disabled due to missing decoder",
 		    demuxer->m_name);
 		demuxer->packet_source.disable_sinks();
 		goto end;
@@ -187,7 +188,7 @@ static int run_demuxer(void *data)
 
 	codec_ctx = avcodec_alloc_context3(codec);
 	if (!codec_ctx) {
-		blog(LOG_ERROR, "Demuxer '%s': out of memory allocating codec context", demuxer->m_name);
+		error("Demuxer '%s': out of memory allocating codec context", demuxer->m_name);
 		goto end;
 	}
 
@@ -222,7 +223,7 @@ static int run_demuxer(void *data)
 	}
 
 	if (avcodec_open2(codec_ctx, codec, NULL) < 0) {
-		blog(LOG_ERROR, "Demuxer '%s': could not open codec", demuxer->m_name);
+		error("Demuxer '%s': could not open codec", demuxer->m_name);
 		goto finally_free_context;
 	}
 
@@ -236,7 +237,7 @@ static int run_demuxer(void *data)
 
 	packet = av_packet_alloc();
 	if (!packet) {
-		blog(LOG_ERROR, "Demuxer '%s': out of memory allocating packet", demuxer->m_name);
+		error("Demuxer '%s': out of memory allocating packet", demuxer->m_name);
 		goto finally_close_sinks;
 	}
 
@@ -269,7 +270,7 @@ static int run_demuxer(void *data)
 		}
 	}
 
-	blog(LOG_DEBUG, "Demuxer '%s': end of frames", demuxer->m_name);
+	scrcpy_log(LOG_DEBUG, "Demuxer '%s': end of frames", demuxer->m_name);
 
 	av_packet_free(&packet);
 finally_close_sinks:
@@ -322,11 +323,11 @@ void sc_demuxer::init(const char *name, sc_socket socket, std::shared_ptr<sc_dem
 
 bool sc_demuxer::start()
 {
-	//LOGD("Demuxer '%s': starting thread", demuxer->name);
+	scrcpy_log(LOG_DEBUG, "Demuxer '%s': starting thread", this->m_name);
 
 	bool ok = sc_thread_create(this->thread, run_demuxer, "scrcpy-demuxer", this);
 	if (!ok) {
-		//LOGE("Demuxer '%s': could not start thread", this->name);
+		error("Demuxer '%s': could not start thread", this->m_name);
 		return false;
 	}
 	return true;

@@ -1,8 +1,10 @@
-﻿#include "sc_log.h"
+#include "sc_log.h"
 #include "assert.h"
 #if _WIN32
 #include <windows.h>
 #endif
+#include "obs.h"
+
 
 #ifdef _WIN32
 bool sc_log_windows_error(const char *prefix, int error)
@@ -23,3 +25,4 @@ bool sc_log_windows_error(const char *prefix, int error)
 	return true;
 }
 #endif
+

@@ -1,6 +1,7 @@
 #include "device.h"
 #include "str_util.h"
 #include <stdio.h>
+#include "util/sc_log.h"
 
 // 初始化设备信息
 int device_init(DeviceInfo *info, const char *serial)
@@ -9,14 +10,14 @@ int device_init(DeviceInfo *info, const char *serial)
 		return -1;
 	}
 
-	LOGI("DEVICE", "device_init: info=%p, serial=%p", (void *)info, (const void *)serial);
+	scrcpy_log(LOG_INFO, "device_init: info=%p, serial=%p", (void *)info, (const void *)serial);
 
 	// 复制序列号
 	if (serial != NULL) {
 		size_t serial_len = strlen(serial) + 1;
 		info->serial = (char *)malloc(serial_len);
 		if (info->serial == NULL) {
-			LOGE("DEVICE", "Failed to allocate memory for serial");
+			error("Failed to allocate memory for serial");
 			// 清理已分配的资源
 			if (info->device_name != NULL) {
 				free(info->device_name);
@@ -32,7 +33,7 @@ int device_init(DeviceInfo *info, const char *serial)
 	info->width = 1920;
 	info->height = 1080;
 
-	LOGI("DEVICE", "Device initialized: %s", serial ? serial : "unknown");
+	scrcpy_log(LOG_INFO, "Device initialized: %s", serial ? serial : "unknown");
 	return 0;
 }
 
@@ -76,5 +77,5 @@ void device_cleanup(DeviceInfo *info)
 		info->device_name = NULL;
 	}
 
-	LOGI("DEVICE", "Device cleaned up");
+	scrcpy_log(LOG_INFO, "Device cleaned up");
 }

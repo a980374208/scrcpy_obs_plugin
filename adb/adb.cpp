@@ -2,6 +2,7 @@
 #include "util/env.h"
 #include <vector>
 #include "util/process_intr.h"
+#include "util/sc_log.h"
 #include "assert.h"
 #include "adb_parser.h"
 #include "util/str_util.h"
@@ -33,7 +34,7 @@ bool sc_adb_init()
 
 	adb_executable = sc_get_env("ADB");
 	if (!adb_executable.empty()) {
-		//LOGD("Using adb: %s", adb_executable.c_str());
+		scrcpy_log(LOG_DEBUG, "Using adb: %s", adb_executable.c_str());
 		return true;
 	}
 
@@ -49,7 +50,7 @@ bool sc_adb_init()
 		return false;
 	}
 
-	LOGD("Using adb (portable): %s", adb_executable);
+	scrcpy_log(LOG_DEBUG, "Using adb (portable): %s", adb_executable.c_str());
 #endif
 	return true;
 }
@@ -102,7 +103,7 @@ bool sc_adb_get_device_info(std::vector<char> &buf, sc_intr &intr, unsigned flag
 	sc_pipe pout;
 	sc_pid pid = sc_adb_execute_p(commands, flags, &pout);
 	if (pid == SC_PROCESS_NONE) {
-		// LOGE("Could not execute adb devices -l");
+		error("Could not execute adb command: %s", shell);
 		return false;
 	}
 	r = sc_pipe_read_all_intr(intr, pid, pout, buf.data(), BUFSIZE - 1);
@@ -114,7 +115,7 @@ bool sc_adb_get_device_info(std::vector<char> &buf, sc_intr &intr, unsigned flag
 	}
 
 	if (r == -1 || r >= BUFSIZE - 1) {
-		// LOGE(" too large");
+		error("ADB response too large");
 		return false;
 	}
 	return true;
@@ -213,12 +214,12 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 	sc_vec_adb_devices vec;
 	bool ok = sc_adb_list_devices(intr, flags, vec);
 	if (!ok) {
-		//LOGE("Could not list ADB devices");
+		error("Could not list ADB devices");
 		return false;
 	}
 
 	if (vec.size() == 0) {
-		//LOGE("Could not find any ADB device");
+		error("Could not find any ADB device");
 		return false;
 	}
 	size_t sel_idx; // index of the single matching device if sel_count == 1
@@ -230,13 +231,13 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 		switch (selector.type) {
 		case SC_ADB_DEVICE_SELECT_SERIAL:
 			assert(!selector.serial.empty());
-			//LOGE("Could not find ADB device %s:", selector.serial.c_str()  );
+			error("Could not find ADB device %s", selector.serial.c_str());
 			break;
 		case SC_ADB_DEVICE_SELECT_USB:
-			//LOGE("Could not find any ADB device over USB:");
+			error("Could not find any ADB device over USB");
 			break;
 		case SC_ADB_DEVICE_SELECT_TCPIP:
-			//LOGE("Could not find any ADB device over TCP/IP:");
+			error("Could not find any ADB device over TCP/IP");
 			break;
 		default:
 			assert(!"Unexpected selector type");
@@ -249,28 +250,27 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 	if (sel_count > 1) {
 		switch (selector.type) {
 		case SC_ADB_DEVICE_SELECT_ALL:
-			//LOGE("Multiple (%" SC_PRIsizet ") ADB devices:", sel_count);
+			error("Multiple (%zu) ADB devices", sel_count);
 			break;
 		case SC_ADB_DEVICE_SELECT_SERIAL:
 			assert(!selector.serial.empty());
-			//LOGE("Multiple (%" SC_PRIsizet ") ADB devices with serial %s:",
-			//    sel_count, selector.serial.c_str());
+			error("Multiple (%zu) ADB devices with serial %s",
+			    sel_count, selector.serial.c_str());
 			break;
 		case SC_ADB_DEVICE_SELECT_USB:
-			//LOGE("Multiple (%" SC_PRIsizet ") ADB devices over USB:",
-			//    sel_count);
+			error("Multiple (%zu) ADB devices over USB",
+			    sel_count);
 			break;
 		case SC_ADB_DEVICE_SELECT_TCPIP:
-			//LOGE("Multiple (%" SC_PRIsizet ") ADB devices over TCP/IP:",
-			//    sel_count);
+			error("Multiple (%zu) ADB devices over TCP/IP",
+			    sel_count);
 			break;
 		default:
 			assert(!"Unexpected selector type");
 			break;
 		}
 		//sc_adb_devices_log(SC_LOG_LEVEL_ERROR, vec.data, vec.size);
-		//LOGE("Select a device via -s (--serial), -d (--select-usb) or -e "
-		//    "(--select-tcpip)");
+		error("Select a device via -s (--serial), -d (--select-usb) or -e (--select-tcpip)");
 		return false;
 	}
 
@@ -282,7 +282,7 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 		return false;
 	}
 
-	//LOGI("ADB device found:");
+	scrcpy_log(LOG_INFO, "ADB device found: %s", device.serial.c_str());
 	//sc_adb_devices_log(SC_LOG_LEVEL_INFO, vec.data, vec.size);
 
 	// Move devics into out_device (do not destroy device)
@@ -313,7 +313,7 @@ static bool process_check_success_internal(sc_pid pid, const char *name, bool cl
 
 	if (pid == SC_PROCESS_NONE) {
 		if (log_errors) {
-			//LOGE("Could not execute \"%s\"", name);
+			error("Could not execute \"%s\"", name);
 		}
 		return false;
 	}
@@ -321,10 +321,10 @@ static bool process_check_success_internal(sc_pid pid, const char *name, bool cl
 	if (exit_code) {
 		if (log_errors) {
 			if (exit_code != SC_EXIT_CODE_NONE) {
-				//LOGE("\"%s\" returned with value %" SC_PRIexitcode, name,
-				//    exit_code);
+				error("\"%s\" returned with value %" SC_PRIexitcode, name,
+				    exit_code);
 			} else {
-				//LOGE("\"%s\" exited unexpectedly", name);
+				error("\"%s\" exited unexpectedly", name);
 			}
 		}
 		return false;
@@ -415,13 +415,13 @@ static bool sc_adb_device_check_state(sc_adb_device &device, sc_vec_adb_devices 
 	}
 
 	if (state == DEVICE_STATE_UNAUTHORIZE) {
-		//LOGE("Device is unauthorized:");
+		error("Device is unauthorized:");
 		for (auto &d : devices) {
-			//LOGE("  %s [%s]", d.serial.c_str(), d.state.c_str());
+			error("  %s [%s]", d.serial.c_str(), device_state_to_str(d.state));
 		}
-		//LOGE("A popup should open on the device to request authorization.");
+		error("A popup should open on the device to request authorization.");
 	} else {
-		//LOGE("Device could not be connected (state=%s)", state.c_str());
+		error("Device could not be connected (state=%s)", device_state_to_str(state));
 	}
 
 	return false;
@@ -497,7 +497,7 @@ std::string sc_adb_getprop(sc_intr &intr, const std::string &serial, const char 
 	sc_pipe pout;
 	sc_pid pid = sc_adb_execute_p(argv, flags, &pout);
 	if (pid == SC_PROCESS_NONE) {
-		//LOGE("Could not execute \"adb getprop\"");
+		error("Could not execute \"adb getprop\"");
 		return {};
 	}
 

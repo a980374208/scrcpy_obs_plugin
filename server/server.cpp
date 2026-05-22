@@ -20,6 +20,65 @@
 
 #define SCRCPY_VERSION "3.3.4"
 
+#include "util/sc_process.h"
+
+class server_log_reader_raii {
+public:
+	server_log_reader_raii(sc_pipe pout) : pout_(pout), thread_started_(false) {
+		if (pout != SC_PROCESS_NONE) {
+			thread_started_ = sc_thread_create(thread_, run_server_log, "scrcpy-log", (void*)(uintptr_t)pout);
+			if (!thread_started_) {
+				error("Failed to create server log reader thread");
+			}
+		}
+	}
+
+	~server_log_reader_raii() {
+		if (pout_ != SC_PROCESS_NONE) {
+			sc_pipe_close(pout_);
+		}
+		if (thread_started_) {
+			sc_thread_join(thread_, NULL);
+		}
+	}
+
+private:
+	static int run_server_log(void *data) {
+		sc_pipe pout = (sc_pipe)(uintptr_t)data;
+		char buf[1024];
+		std::string line_buffer;
+
+		while (true) {
+			ssize_t r = sc_pipe_read(pout, buf, sizeof(buf) - 1);
+			if (r <= 0) {
+				break;
+			}
+			buf[r] = '\0';
+			line_buffer += buf;
+
+			size_t pos;
+			while ((pos = line_buffer.find('\n')) != std::string::npos) {
+				std::string line = line_buffer.substr(0, pos);
+				if (!line.empty() && line.back() == '\r') {
+					line.pop_back();
+				}
+				scrcpy_log(LOG_INFO, "[server] %s", line.c_str());
+				line_buffer.erase(0, pos + 1);
+			}
+		}
+
+		if (!line_buffer.empty()) {
+			scrcpy_log(LOG_INFO, "[server] %s", line_buffer.c_str());
+		}
+
+		return 0;
+	}
+
+	sc_pipe pout_{SC_PROCESS_NONE};
+	sc_thread thread_{};
+	bool thread_started_{false};
+};
+
 static void sc_server_on_terminated(void *userdata)
 {
 	sc_server *server = (sc_server *)userdata;
@@ -32,7 +91,7 @@ static void sc_server_on_terminated(void *userdata)
 
 	server->m_cbs->on_disconnected(*server, server->m_cbs_userdata);
 
-	//LOGD("Server terminated");
+	scrcpy_log(LOG_INFO, "Server terminated");
 }
 
 static bool connect_and_read_byte(sc_intr &intr, sc_socket socket, uint32_t tunnel_host, uint16_t tunnel_port)
@@ -58,7 +117,7 @@ static bool device_read_info(sc_intr &intr, sc_socket device_socket, struct sc_s
 	uint8_t buf[SC_DEVICE_NAME_FIELD_LENGTH];
 	ssize_t r = intr.net_recv_intr(device_socket, buf, sizeof(buf));
 	if (r < SC_DEVICE_NAME_FIELD_LENGTH) {
-		//LOGE("Could not retrieve device information");
+		error("Could not retrieve device information");
 		return false;
 	}
 	// in case the client sends garbage
@@ -142,7 +201,7 @@ bool sc_server::server_start()
 
 	bool ok = sc_thread_create(this->m_thread, run_server, "scrcpy-server", this);
 	if (!ok) {
-		//LOGE("Could not create server thread");
+		error("Could not create server thread");
 		return false;
 	}
 
@@ -187,7 +246,7 @@ bool sc_server::push_server(sc_intr &intr, const std::string &serial)
 		return false;
 	}
 	if (!sc_file_is_regular(server_path)) {
-		//LOGE("'%s' does not exist or is not a regular file\n", server_path);
+		error("'%s' does not exist or is not a regular file", server_path.c_str());
 		return false;
 	}
 	bool ok = sc_adb_push(intr, serial, server_path, SC_DEVICE_SERVER_PATH, 0);
@@ -203,23 +262,23 @@ std::string sc_server::get_server_path()
 
 	if (env_path) {
 		// if the envvar is set, use it
-		//LOGD("Using SCRCPY_SERVER_PATH: %s", env_path);
+		scrcpy_log(LOG_DEBUG, "Using SCRCPY_SERVER_PATH: %s", env_path);
 		return std::string(env_path);
 	}
 
 #ifndef PORTABLE
-	//LOGD("Using server: " SC_SERVER_PATH_DEFAULT);
+	scrcpy_log(LOG_DEBUG, "Using server: " SC_SERVER_PATH_DEFAULT);
 	std::string path = SC_SERVER_PATH_DEFAULT;
 	path = get_app_relative_path(path).string();
 	return path;
 #else
 	auto local_path = sc_file_get_local_path(SC_SERVER_FILENAME);
 	if (!local_path) {
-		LOGE("Could not get local file path, "
+		error("Could not get local file path, "
 		     "using " SC_SERVER_FILENAME " from current directory");
 		return std::string(SC_SERVER_FILENAME);
 	}
-	LOGD("Using server (portable): %s", local_path);
+	scrcpy_log(LOG_DEBUG, "Using server (portable): %s", local_path);
 	return std::string(local_path);
 #endif
 }
@@ -244,7 +303,7 @@ sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout =
 #ifdef SERVER_DEBUGGER
 	uint16_t sdk_version = sc_adb_get_device_sdk_version(&server->intr, serial);
 	if (!sdk_version) {
-		LOGE("Could not determine SDK version");
+		error("Could not determine SDK version");
 		return 0;
 	}
 
@@ -280,7 +339,7 @@ sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout =
 	}
 
 #ifdef SERVER_DEBUGGER
-	LOGI("Server debugger listening%s...", sdk_version < 30 ? " on port " SERVER_DEBUGGER_PORT : "");
+	scrcpy_log(LOG_INFO, "Server debugger listening%s...", sdk_version < 30 ? " on port " SERVER_DEBUGGER_PORT : "");
 	// For Android < 11, from the computer:
 	//     - run `adb forward tcp:5005 tcp:5005`
 	// For Android >= 11:
@@ -335,6 +394,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 		if (video) {
 			video_socket = this->m_intr.net_accept_intr(this->m_tunnel.m_server_socket);
 			if (video_socket == SC_SOCKET_NONE) {
+				error("Server connection failed: video socket accept failed");
 				close_tunnel();
 				return false;
 			}
@@ -343,6 +403,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 		if (audio) {
 			audio_socket = this->m_intr.net_accept_intr(this->m_tunnel.m_server_socket);
 			if (audio_socket == SC_SOCKET_NONE) {
+				error("Server connection failed: audio socket accept failed");
 				cleanup_sockets(video_socket, SC_SOCKET_NONE, SC_SOCKET_NONE);
 				close_tunnel();
 				return false;
@@ -352,6 +413,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 		if (control) {
 			control_socket = this->m_intr.net_accept_intr(this->m_tunnel.m_server_socket);
 			if (control_socket == SC_SOCKET_NONE) {
+				error("Server connection failed: control socket accept failed");
 				cleanup_sockets(video_socket, audio_socket, SC_SOCKET_NONE);
 				close_tunnel();
 				return false;
@@ -366,6 +428,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 		sc_tick delay = SC_TICK_FROM_MS(100);
 		sc_socket first_socket = this->connect_to_server(attempts, delay, tunnel_host, tunnel_port);
 		if (first_socket == SC_SOCKET_NONE) {
+			error("Server connection failed: connect to server failed");
 			close_tunnel();
 			return false;
 		}
@@ -379,6 +442,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 				audio_socket = net_socket();
 				if (audio_socket == SC_SOCKET_NONE ||
 					!this->m_intr.net_connect_intr(audio_socket, tunnel_host, tunnel_port)) {
+					error("Server connection failed: audio socket connect failed");
 					cleanup_sockets(video_socket, audio_socket, SC_SOCKET_NONE);
 					close_tunnel();
 					return false;
@@ -393,6 +457,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 				control_socket = net_socket();
 				if (control_socket == SC_SOCKET_NONE ||
 					!this->m_intr.net_connect_intr(control_socket, tunnel_host, tunnel_port)) {
+					error("Server connection failed: control socket connect failed");
 					cleanup_sockets(video_socket, audio_socket, control_socket);
 					close_tunnel();
 					return false;
@@ -434,7 +499,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 sc_socket sc_server::connect_to_server(unsigned attempts, sc_tick delay, uint32_t host, uint16_t port)
 {
 	do {
-		//LOGD("Remaining connection attempts: %u", attempts);
+		scrcpy_log(LOG_DEBUG, "Remaining connection attempts: %u", attempts);
 		sc_socket socket = net_socket();
 		if (socket != SC_SOCKET_NONE) {
 			bool ok = connect_and_read_byte(this->m_intr, socket, host, port);
@@ -455,7 +520,7 @@ sc_socket sc_server::connect_to_server(unsigned attempts, sc_tick delay, uint32_
 			sc_tick deadline = sc_tick_now() + delay;
 			bool ok = this->sc_server_sleep(deadline);
 			if (!ok) {
-				//LOGI("Connection attempt stopped");
+				scrcpy_log(LOG_INFO, "Connection attempt stopped");
 				break;
 			}
 		}
@@ -478,7 +543,7 @@ bool sc_server::sc_server_sleep(sc_tick deadline)
 void sc_server::sc_server_kill_adb_if_requested()
 {
 	if (this->m_params.kill_adb_on_close) {
-		//LOGI("Killing adb server...");
+		scrcpy_log(LOG_INFO, "Killing adb server...");
 		unsigned flags = SC_ADB_NO_STDOUT | SC_ADB_NO_STDERR | SC_ADB_NO_LOGERR;
 		sc_adb_kill_server(this->m_intr, flags);
 	}
@@ -510,6 +575,7 @@ int sc_server::run_server(void *data)
 
 	// 4. push server
 	if (!server->push_server(server->m_intr, serial)) {
+		error("push_server failed");
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
@@ -525,17 +591,22 @@ int sc_server::run_server(void *data)
 	// 6. 打开 adb tunnel（RAII：失败立即关闭）
 	if (!server->m_tunnel.adb_tunnel_open(server->m_intr, serial, server->m_device_socket_name, params.port_range,
 					      params.force_adb_forward)) {
+		error("adb_tunnel_open failed");
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
 
 	// 7. 启动 server 进程
-	sc_pid pid = server->execute_server(params);
+	sc_pipe pout = SC_PROCESS_NONE;
+	sc_pid pid = server->execute_server(params, &pout);
 	if (pid == SC_PROCESS_NONE) {
+		error("excute_server failed");
 		server->m_tunnel.sc_adb_tunnel_close(server->m_intr, serial, server->m_device_socket_name);
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
+
+	server_log_reader_raii log_reader(pout);
 
 	// 8. 注册进程终止回调
 	server->m_listener.on_terminated = [server]() {
@@ -594,7 +665,7 @@ int sc_server::run_server(void *data)
 		server->sc_server_kill_adb_if_requested();
 		return 0;
 	} catch (const std::exception &e) {
-		e;
+		error("Exception in run_server: %s", e.what());
 		sc_process_terminate(pid);
 		sc_process_wait(pid, true);
 		pid = SC_PROCESS_NONE;

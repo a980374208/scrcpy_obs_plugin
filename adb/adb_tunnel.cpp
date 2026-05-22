@@ -1,6 +1,8 @@
 #include "adb_tunnel.h"
 #include "assert.h"
 #include "adb/adb.h"
+#include "sc_log.h"
+#include <cinttypes>
 
 sc_adb_tunnel::sc_adb_tunnel() : m_enabled(false), m_forward(false), m_server_socket(SC_SOCKET_NONE), m_local_port(0) {}
 
@@ -18,7 +20,7 @@ bool sc_adb_tunnel::adb_tunnel_open(sc_intr &intr, const std::string &serial, co
 		// if "adb reverse" does not work (e.g. over "adb connect"), it
 		// fallbacks to "adb forward", so the app socket is the client
 
-		//LOGW("'adb reverse' failed, fallback to 'adb forward'");
+		scrcpy_log(LOG_WARNING, "'adb reverse' failed, fallback to 'adb forward'");
 	}
 	return enable_tunnel_forward_any_port(intr, serial, device_socket_name, port_range);
 }
@@ -61,22 +63,22 @@ bool sc_adb_tunnel::enable_tunnel_reverse_any_port(sc_intr &intr, const std::str
 
 		// failure, disable tunnel and try another port
 		if (!sc_adb_reverse_remove(intr, serial, device_socket_name, SC_ADB_NO_STDOUT)) {
-			//LOGW("Could not remove reverse tunnel on port %" PRIu16, port);
+			scrcpy_log(LOG_WARNING, "Could not remove reverse tunnel on port %" PRIu16, port);
 		}
 
 		// check before incrementing to avoid overflow on port 65535
 		if (port < port_range.last) {
-			//LOGW("Could not listen on port %" PRIu16 ", retrying on %" PRIu16,
-			//    port, (uint16_t)(port + 1));
+			scrcpy_log(LOG_WARNING, "Could not listen on port %" PRIu16 ", retrying on %" PRIu16,
+			    port, (uint16_t)(port + 1));
 			port++;
 			continue;
 		}
 
 		if (port_range.first == port_range.last) {
-			//LOGE("Could not listen on port %" PRIu16, port_range.first);
+			error("Could not listen on port %" PRIu16, port_range.first);
 		} else {
-			//LOGE("Could not listen on any port in range %" PRIu16 ":%" PRIu16,
-			//    port_range.first, port_range.last);
+			error("Could not listen on any port in range %" PRIu16 ":%" PRIu16,
+			    port_range.first, port_range.last);
 		}
 		return false;
 	}
@@ -106,7 +108,7 @@ bool sc_adb_tunnel::sc_adb_tunnel_close(sc_intr &intr, const std::string serial,
 
 		assert(this->m_server_socket != SC_SOCKET_NONE);
 		if (!net_close(this->m_server_socket)) {
-			//LOGW("Could not close server socket");
+			scrcpy_log(LOG_WARNING, "Could not close server socket");
 		}
 
 		// server_socket is never used anymore

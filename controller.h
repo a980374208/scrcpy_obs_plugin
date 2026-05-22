@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 #ifdef __cplusplus
-#include <mutex>
+#include "util/sc_thread.h"
 #endif
 
 struct sc_controller;
@@ -14,6 +14,10 @@ struct sc_controller;
 struct sc_controller_callbacks {
     void (*on_ended)(struct sc_controller *controller, bool error,
                      void *userdata);
+    void (*on_device_info)(struct sc_controller *controller, const char *json,
+                           void *userdata);
+    void (*on_error_message)(struct sc_controller *controller, const char *error_msg,
+                             void *userdata);
 };
 
 struct sc_controller {
@@ -22,8 +26,9 @@ struct sc_controller {
     const struct sc_controller_callbacks *cbs;
     void *cbs_userdata;
 #ifdef __cplusplus
-    std::mutex mutex;
+    sc_mutex mutex;
 #endif
+    void *recv_thread;
 };
 
 #ifdef __cplusplus

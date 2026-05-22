@@ -78,4 +78,24 @@ inline enum device_connect_state get_device_state_from_string(const std::string 
 	}
 }
 
+inline const char *device_state_to_str(enum device_connect_state state)
+{
+	switch (state) {
+	case DEVICE_STATE_OFFLINE:
+		return "offline";
+	case DEVICE_STATE_BOOTLOADER:
+		return "bootloader";
+	case DEVICE_STATE_DEVICE:
+		return "device";
+	case DEVICE_STATE_RECOVERY:
+		return "recovery";
+	case DEVICE_STATE_UNAUTHORIZE:
+		return "unauthorized";
+	case DEVICE_STATE_SIDELOAD:
+		return "sideload";
+	default:
+		return "unknown";
+	}
+}
+
 #endif // SCRCPY_STR_UTIL_H

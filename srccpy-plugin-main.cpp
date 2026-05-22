@@ -21,6 +21,8 @@ static void srccpy_source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "choose_res", "1920x1080");
 	obs_data_set_default_int(settings, "choose_src", SC_VIDEO_SOURCE_DISPLAY);
 	obs_data_set_default_int(settings, "max_fps", 30);
+	obs_data_set_default_bool(settings, "pause_video", false);
+	obs_data_set_default_bool(settings, "pause_audio", false);
 }
 
 static const sc_adb_device_info get_scrcpy_device_info(scrcpy *sc, obs_properties_t *props, obs_data_t *settings)
@@ -211,8 +213,13 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	sc_adb_list_devices(bs->server.m_intr, 0, devices);
 	sc_vec_adb_device_infos device_infos;
 
-	if (!devices.empty()) {
-		bs->get_device_infos(device_infos, devices.at(0).serial);
+	if (bs->controller_started) {
+		bs->request_device_info();
+		device_infos = bs->get_device_infos();
+	} else {
+		for (const auto &device : devices) {
+			bs->get_device_infos(device_infos, device.serial);
+		}
 	}
 	for (const auto &device_info : device_infos) {
 		AddDevice(dev_prop, device_info.second);
@@ -271,10 +278,10 @@ void register_srccpy()
 	};
 
 	info.show = [](void *data) {
-		//static_cast<BrowserSource *>(data)->SetShowing(true);
+		static_cast<scrcpy *>(data)->set_stream_paused(PAUSE_AUDIO_VIDEO, false);
 	};
 	info.hide = [](void *data) {
-		//static_cast<BrowserSource *>(data)->SetShowing(false);
+		static_cast<scrcpy *>(data)->set_stream_paused(PAUSE_AUDIO_VIDEO, true);
 	};
 	info.activate = [](void *data) {
 		//BrowserSource *bs = static_cast<BrowserSource *>(data);
