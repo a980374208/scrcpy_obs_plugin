@@ -590,9 +590,29 @@ int sc_server::run_server(void *data)
 	server->m_device_socket_name = SC_SOCKET_NAME_PREFIX + scid_hex(params.scid);
 
 	// 6. 打开 adb tunnel（RAII：失败立即关闭）
+	bool force_adb_forward = params.force_adb_forward;
+	if ((params.tunnel_host || params.tunnel_port) && !force_adb_forward) {
+		scrcpy_log(LOG_INFO, "Tunnel host/port is set, force-adb-forward automatically enabled.");
+		force_adb_forward = true;
+	}
 	if (!server->m_tunnel.adb_tunnel_open(server->m_intr, serial, server->m_device_socket_name, params.port_range,
-					      params.force_adb_forward)) {
+					      force_adb_forward)) {
 		error("adb_tunnel_open failed");
+		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
+		return -1;
+	}
+	/*
+	防止获取设备列表及此次调用execute_server间隔过短，
+	导致的负载累积从而导致adb_tunnel_open实际执行android端暂未完成的问题
+	目前解决方案
+	1.获取设备列表时不关闭server,在此地确定设备后关闭其他设备的server
+	2.添加延时（暂时使用此方案）
+	*/
+	sc_tick tunnel_delay = sc_tick_now() + SC_TICK_FROM_MS(200);
+	if (!server->sc_server_sleep(tunnel_delay)) {
+		// 如果在延迟期间用户取消了连接或关闭了 OBS，安全退出
+		scrcpy_log(LOG_INFO, "Connection interrupted during tunnel delay");
+		server->m_tunnel.sc_adb_tunnel_close(server->m_intr, serial, server->m_device_socket_name);
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}

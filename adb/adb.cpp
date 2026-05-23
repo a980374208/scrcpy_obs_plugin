@@ -550,6 +550,19 @@ bool sc_adb_forward_remove(sc_intr &intr, const std::string serial, uint16_t loc
 	return process_check_success_intr(intr, pid, "adb forward --remove", flags);
 }
 
+bool sc_adb_forward(sc_intr &intr, const std::string &serial, uint16_t local_port,
+		    const std::string &device_socket_name, unsigned flags)
+{
+	assert(!serial.empty() && !device_socket_name.empty());
+	std::string local = "tcp:" + std::to_string(local_port);
+	std::string remote = "localabstract:" + device_socket_name;
+
+	std::vector<std::string> argv = SC_ADB_COMMAND("-s", serial, "forward", local, remote);
+
+	sc_pid pid = sc_adb_execute(argv, flags);
+	return process_check_success_intr(intr, pid, "adb forward", flags);
+}
+
 bool sc_adb_kill_server(sc_intr &intr, unsigned flags)
 {
 	std::vector<std::string> argv = SC_ADB_COMMAND("kill-server");
@@ -557,3 +570,4 @@ bool sc_adb_kill_server(sc_intr &intr, unsigned flags)
 	sc_pid pid = sc_adb_execute(argv, flags);
 	return process_check_success_intr(intr, pid, "adb kill-server", flags);
 }
+

@@ -52,8 +52,8 @@ static void sc_audio_demuxer_on_ended(sc_demuxer *demuxer, enum sc_demuxer_statu
 	}
 }
 
-scrcpy::scrcpy(obs_data_t *, obs_source_t *source_) : source(source_) {
-	srccpy_init();
+scrcpy::scrcpy(obs_data_t *set, obs_source_t *source_) : source(source_) {
+	srccpy_init(set);
 }
 
 scrcpy::~scrcpy()
@@ -76,7 +76,7 @@ scrcpy::~scrcpy()
 	}
 }
 
-int scrcpy::srccpy_init()
+int scrcpy::srccpy_init(obs_data_t *set)
 {
 	sc_cond_init(device_info_cond);
 	uint32_t scid = generate_scid();
@@ -141,10 +141,8 @@ int scrcpy::srccpy_init()
 	if (!server.server_init(&cbs, this)) {
 		return SCRCPY_EXIT_FAILURE;
 	}
-	if (!server.push_server(server.m_intr, server.m_serial)) {
-		return SCRCPY_EXIT_FAILURE;
-	}
-
+	
+	update(set);
 	return 0;
 }
 
@@ -158,7 +156,9 @@ void scrcpy::update(obs_data_t *settings)
 		sc_video_source choose_src = static_cast<enum sc_video_source>(obs_data_get_int(settings, "choose_src"));
 		std::string choose_capture = obs_data_get_string(settings, "choose_capture");
 		int max_fps = (int)obs_data_get_int(settings, "choose_fps");
-
+		if (select_device.empty()) {
+			return;
+		}
 		bool serial_changed = (params.req_serial != select_device);
 		bool codec_res_fps_changed = (params.max_fps != std::to_string(max_fps));
 

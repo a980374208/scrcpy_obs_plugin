@@ -197,9 +197,27 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	// 1. 刷新设备按钮
 	obs_properties_add_button2(
 		props, "refresh_devices", obs_module_text("RefreshDeviceList"),
-		[](obs_properties_t *, obs_property_t *, void *data) {
-			// static_cast<scrcpy *>(data)->Refresh();
-			return false;
+		[](obs_properties_t *props, obs_property_t *, void *data) {
+			scrcpy *bs = static_cast<scrcpy *>(data);
+			bs->device_infos.clear();
+			sc_vec_adb_devices devices;
+			sc_adb_list_devices(bs->server.m_intr, 0, devices);
+			for (const auto &device : devices) {
+				if (bs->params.req_serial == device.serial) {
+					bs->request_device_info();
+				} else {
+					bs->get_device_infos(bs->device_infos, device.serial);
+				}
+			}
+			obs_property_t *dev_prop = obs_properties_get(props, "device_list");
+			if (dev_prop) {
+				obs_property_list_clear(dev_prop); // 必须手动清空旧的下拉列表选项
+				for (const auto &device_info : bs->device_infos) {
+					AddDevice(dev_prop, device_info.second); // 重新填充选项
+				}
+			}
+
+			return true;
 		},
 		bs);
 	obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
@@ -211,20 +229,23 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	// 获取并填充已连接设备
 	sc_vec_adb_devices devices;
 	sc_adb_list_devices(bs->server.m_intr, 0, devices);
-	sc_vec_adb_device_infos device_infos;
-
+	bs->device_infos.clear();
 	if (bs->controller_started) {
-		bs->request_device_info();
-		device_infos = bs->get_device_infos();
+		for (const auto &device : devices) {
+			if (bs->params.req_serial == device.serial) {
+				bs->request_device_info();
+			} else {
+				bs->get_device_infos(bs->device_infos, device.serial);
+			}
+		}
 	} else {
 		for (const auto &device : devices) {
-			bs->get_device_infos(device_infos, device.serial);
+			bs->get_device_infos(bs->device_infos, device.serial);
 		}
 	}
-	for (const auto &device_info : device_infos) {
+	for (const auto &device_info : bs->device_infos) {
 		AddDevice(dev_prop, device_info.second);
 	}
-	bs->update_device_infos(device_infos);
 	// 3. 画面来源切换（Display 或 Camera）
 
 	obs_property_t *src_prop = obs_properties_add_list(props, "choose_src", obs_module_text("ChooseUsedScreen"),
@@ -270,11 +291,11 @@ void register_srccpy()
 	};
 	info.get_width = [](void *data) {
 		uint32_t w = static_cast<scrcpy *>(data)->width;
-		return w > 0 ? w : (uint32_t)1080;
+		return w > 0 ? w : (uint32_t)0;
 	};
 	info.get_height = [](void *data) {
 		uint32_t h = static_cast<scrcpy *>(data)->height;
-		return h > 0 ? h : (uint32_t)1920;
+		return h > 0 ? h : (uint32_t)0;
 	};
 
 	info.show = [](void *data) {

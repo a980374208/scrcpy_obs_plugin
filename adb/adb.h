@@ -67,4 +67,7 @@ uint16_t sc_adb_get_device_sdk_version(sc_intr &intr, const std::string &serial)
 
 bool sc_adb_forward_remove(sc_intr &intr, const std::string serial, uint16_t local_port, unsigned flags);
 
+bool sc_adb_forward(sc_intr &intr, const std::string &serial, uint16_t local_port, const std::string &device_socket_name, unsigned flags);
+
 bool sc_adb_kill_server(sc_intr &intr, unsigned flags);
+

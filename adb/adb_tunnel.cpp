@@ -92,7 +92,37 @@ bool sc_adb_tunnel::enable_tunnel_forward_any_port(sc_intr &intr, const std::str
 						   const std::string &device_socket_name,
 						   const sc_port_range &port_range)
 {
-	return false;
+	this->m_forward = true;
+
+	uint16_t port = port_range.first;
+	for (;;) {
+		if (sc_adb_forward(intr, serial, port, device_socket_name, SC_ADB_NO_STDOUT)) {
+			// success
+			this->m_local_port = port;
+			this->m_enabled = true;
+			return true;
+		}
+
+		if (intr.is_interrupted()) {
+			// Stop immediately
+			return false;
+		}
+
+		if (port < port_range.last) {
+			scrcpy_log(LOG_WARNING, "Could not forward port %" PRIu16 ", retrying on %" PRIu16,
+			    port, (uint16_t)(port + 1));
+			port++;
+			continue;
+		}
+
+		if (port_range.first == port_range.last) {
+			error("Could not forward port %" PRIu16, port_range.first);
+		} else {
+			error("Could not forward any port in range %" PRIu16 ":%" PRIu16,
+			    port_range.first, port_range.last);
+		}
+		return false;
+	}
 }
 
 bool sc_adb_tunnel::listen_on_port(sc_intr &intr, const sc_socket &socket, uint16_t port)

@@ -30,10 +30,10 @@ enum puse_stream_type {
 
 class scrcpy {
 public:
-	scrcpy(obs_data_t *, obs_source_t *source_);
+	scrcpy(obs_data_t *set, obs_source_t *source_);
 	scrcpy(const scrcpy &) = delete;
 	~scrcpy();
-	int srccpy_init();
+	int srccpy_init(obs_data_t *set);
 
 	void update(obs_data_t *settings);
 
