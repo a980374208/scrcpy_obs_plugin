@@ -5,6 +5,17 @@
 #include "util/dstr.hpp"
 #include "util/str_util.h"
 
+#define TEXT_CAMERA_FORMAT        obs_module_text("Camera.Format%s(%s)")
+#define TEXT_CAMERA_DISPLAY       obs_module_text("Camera.Display%s")
+#define TEXT_REFRESH_DEVICE_LIST  obs_module_text("RefreshDeviceList")
+#define TEXT_DEVICE               obs_module_text("DEVICE")
+#define TEXT_CHOOSE_USED_SCREEN   obs_module_text("ChooseUsedScreen")
+#define TEXT_VIDEO_SOURCE_DISPLAY obs_module_text("VIDEO_SOURCE_DISPLAY")
+#define TEXT_VIDEO_SOURCE_CAMERA  obs_module_text("VIDEO_SOURCE_CAMERA")
+#define TEXT_CHOOSE_USED_CAPTURE  obs_module_text("ChooseUsedCapture")
+#define TEXT_CHOOSE_RESOLUTION    obs_module_text("ChooseResolution")
+#define TEXT_CHOOSE_FPS           obs_module_text("ChooseFPS")
+#define TEXT_SCRCPY_SOURCE        obs_module_text("AndroidDevice")
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("pulgin-srccpy", "en-US")
@@ -113,7 +124,7 @@ static auto on_src_changed(void *ptr, obs_properties_t *props, obs_property_t *p
 		for (const auto &camera_map : info.cameras) {
 			const auto &camera = camera_map.second;
 			const char *facing_raw = sc_facing_get_name(camera.facing);
-			const char *format_template = obs_module_text("Camera.Format%s(%s)");
+			const char *format_template = TEXT_CAMERA_FORMAT;
 			struct dstr name_dstr = {0};
 			dstr_printf(&name_dstr, format_template, camera.id.c_str(), facing_raw);
 			obs_property_list_add_string(c_c, name_dstr.array, camera.id.c_str());
@@ -122,7 +133,7 @@ static auto on_src_changed(void *ptr, obs_properties_t *props, obs_property_t *p
 	} else {
 		for (const auto &display_map : info.displays) {
 			const auto &display = display_map.second;
-			const char *name = obs_module_text("Camera.Display%s");
+			const char *name = TEXT_CAMERA_DISPLAY;
 			std::string id_str = std::to_string(display.id);
 			const char *id = id_str.c_str();
 			struct dstr name_dstr = {0};
@@ -196,7 +207,7 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	scrcpy *bs = static_cast<scrcpy *>(data);
 	// 1. 刷新设备按钮
 	obs_properties_add_button2(
-		props, "refresh_devices", obs_module_text("RefreshDeviceList"),
+		props, "refresh_devices", TEXT_REFRESH_DEVICE_LIST,
 		[](obs_properties_t *props, obs_property_t *, void *data) {
 			scrcpy *bs = static_cast<scrcpy *>(data);
 			bs->device_infos.clear();
@@ -223,7 +234,7 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 	// 2. 设备改变回调
 
-	obs_property_t *dev_prop = obs_properties_add_list(props, "device_list", obs_module_text("DEVICE"),
+	obs_property_t *dev_prop = obs_properties_add_list(props, "device_list", TEXT_DEVICE,
 							   OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_set_modified_callback2(dev_prop, on_device_changed, bs);
 	// 获取并填充已连接设备
@@ -248,20 +259,20 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	}
 	// 3. 画面来源切换（Display 或 Camera）
 
-	obs_property_t *src_prop = obs_properties_add_list(props, "choose_src", obs_module_text("ChooseUsedScreen"),
+	obs_property_t *src_prop = obs_properties_add_list(props, "choose_src", TEXT_CHOOSE_USED_SCREEN,
 							   OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_set_modified_callback2(src_prop, on_src_changed, bs);
-	obs_property_list_add_int(src_prop, "SC_VIDEO_SOURCE_DISPLAY", SC_VIDEO_SOURCE_DISPLAY);
-	obs_property_list_add_int(src_prop, "SC_VIDEO_SOURCE_CAMERA", SC_VIDEO_SOURCE_CAMERA);
+	obs_property_list_add_int(src_prop, "VIDEO_SOURCE_DISPLAY", SC_VIDEO_SOURCE_DISPLAY);
+	obs_property_list_add_int(src_prop, "VIDEO_SOURCE_CAMERA", SC_VIDEO_SOURCE_CAMERA);
 	// 4. 采集具体项切换（Camera ID 或 Display ID 变更）
 
 	obs_property_t *cap_pror = obs_properties_add_list(props, "choose_capture",
-							   obs_module_text("ChooseUsedCapture"), OBS_COMBO_TYPE_LIST,
+							   TEXT_CHOOSE_USED_CAPTURE, OBS_COMBO_TYPE_LIST,
 							   OBS_COMBO_FORMAT_STRING);
 	obs_property_set_modified_callback2(cap_pror, on_choose_capture_changed, bs);
-	obs_properties_add_list(props, "choose_res", obs_module_text("ChooseResolution"), OBS_COMBO_TYPE_LIST,
+	obs_properties_add_list(props, "choose_res", TEXT_CHOOSE_RESOLUTION, OBS_COMBO_TYPE_LIST,
 				OBS_COMBO_FORMAT_STRING);
-	obs_properties_add_list(props, "choose_fps", obs_module_text("ChooseFPS"), OBS_COMBO_TYPE_LIST,
+	obs_properties_add_list(props, "choose_fps", TEXT_CHOOSE_FPS, OBS_COMBO_TYPE_LIST,
 				OBS_COMBO_FORMAT_INT);
 	return props;
 }
@@ -278,7 +289,7 @@ void register_srccpy()
 	info.icon_type = OBS_ICON_TYPE_BROWSER;
 
 	info.get_name = [](void *) {
-		return obs_module_text("ScrcpySource");
+		return TEXT_SCRCPY_SOURCE;
 	};
 	info.create = [](obs_data_t *settings, obs_source_t *source) -> void * {
 		return new scrcpy(settings, source);
