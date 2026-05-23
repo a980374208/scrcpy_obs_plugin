@@ -199,10 +199,17 @@ sc_control_msg_serialize(const struct sc_control_msg *msg, uint8_t *buf) {
             buf[1] = msg->switch_video_source.source;
             if (msg->switch_video_source.source == 0) {
                 sc_write32be(&buf[2], msg->switch_video_source.display_id);
-                return 6;
+                sc_write32be(&buf[6], msg->switch_video_source.max_size);
+                uint32_t max_fps_bits;
+                memcpy(&max_fps_bits, &msg->switch_video_source.max_fps, 4);
+                sc_write32be(&buf[10], max_fps_bits);
+                return 14;
             } else {
                 size_t len = write_string_tiny(&buf[2], msg->switch_video_source.camera_id, 255);
-                return 2 + len;
+                sc_write32be(&buf[2 + len], msg->switch_video_source.camera_width);
+                sc_write32be(&buf[6 + len], msg->switch_video_source.camera_height);
+                sc_write32be(&buf[10 + len], msg->switch_video_source.camera_fps);
+                return 14 + len;
             }
         case SC_CONTROL_MSG_TYPE_GET_DEVICE_INFO:
             return 1;
@@ -304,11 +311,16 @@ sc_control_msg_log(const struct sc_control_msg *msg) {
             break;
         case SC_CONTROL_MSG_TYPE_SWITCH_VIDEO_SOURCE:
             if (msg->switch_video_source.source == 0) {
-                LOG_CMSG("switch video source: display %" PRIu32,
-                         msg->switch_video_source.display_id);
+                LOG_CMSG("switch video source: display %" PRIu32 " max_size=%" PRIu32 " max_fps=%f",
+                         msg->switch_video_source.display_id,
+                         msg->switch_video_source.max_size,
+                         msg->switch_video_source.max_fps);
             } else {
-                LOG_CMSG("switch video source: camera \"%s\"",
-                         msg->switch_video_source.camera_id ? msg->switch_video_source.camera_id : "");
+                LOG_CMSG("switch video source: camera \"%s\" size=%" PRIu32 "x%" PRIu32 " fps=%" PRIu32,
+                         msg->switch_video_source.camera_id ? msg->switch_video_source.camera_id : "",
+                         msg->switch_video_source.camera_width,
+                         msg->switch_video_source.camera_height,
+                         msg->switch_video_source.camera_fps);
             }
             break;
         case SC_CONTROL_MSG_TYPE_GET_DEVICE_INFO:

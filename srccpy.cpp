@@ -187,7 +187,17 @@ void scrcpy::update(obs_data_t *settings)
 			}
 		}
 
-		if (!serial_changed && !codec_res_fps_changed && src_or_id_changed &&
+		bool resolution_changed = false;
+		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+			resolution_changed = (params.max_size != cx);
+		} else {
+			resolution_changed = (params.camera_size != select_res);
+		}
+		bool fps_changed = (params.max_fps != std::to_string(max_fps));
+
+		bool config_changed = src_or_id_changed || resolution_changed || fps_changed;
+
+		if (!serial_changed && config_changed &&
 		    server_started && controller_initialized && controller_started) {
 			
 			scrcpy_log(LOG_INFO, "Dynamically switching video source to %s (%s)",
@@ -200,8 +210,14 @@ void scrcpy::update(obs_data_t *settings)
 			msg.switch_video_source.source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? 0 : 1;
 			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
 				msg.switch_video_source.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
+				int size = cx > cy ? cx : cy;
+				msg.switch_video_source.max_size = size;
+				msg.switch_video_source.max_fps = (float)max_fps;
 			} else {
 				msg.switch_video_source.camera_id = _strdup(choose_capture.c_str());
+				msg.switch_video_source.camera_width = cx;
+				msg.switch_video_source.camera_height = cy;
+				msg.switch_video_source.camera_fps = max_fps;
 			}
 
 			send_control_msg(msg);
@@ -210,9 +226,12 @@ void scrcpy::update(obs_data_t *settings)
 			params.video_source = choose_src;
 			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
 				params.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
+				params.max_size = cx > cy ? cx : cy;
 			} else {
 				params.camera_id = choose_capture;
+				params.camera_size = select_res;
 			}
+			params.max_fps = std::to_string(max_fps);
 
 			server.update_params(&params);
 			return;

@@ -608,7 +608,7 @@ int sc_server::run_server(void *data)
 	1.获取设备列表时不关闭server,在此地确定设备后关闭其他设备的server
 	2.添加延时（暂时使用此方案）
 	*/
-	sc_tick tunnel_delay = sc_tick_now() + SC_TICK_FROM_MS(200);
+	sc_tick tunnel_delay = sc_tick_now() + SC_TICK_FROM_MS(300);
 	if (!server->sc_server_sleep(tunnel_delay)) {
 		// 如果在延迟期间用户取消了连接或关闭了 OBS，安全退出
 		scrcpy_log(LOG_INFO, "Connection interrupted during tunnel delay");

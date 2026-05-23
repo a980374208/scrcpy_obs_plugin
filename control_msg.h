@@ -117,7 +117,12 @@ struct sc_control_msg {
         struct {
             uint8_t source; // 0 for display, 1 for camera
             uint32_t display_id;
+            uint32_t max_size;
+            float max_fps;
             char *camera_id; // owned, to be freed by free()
+            uint32_t camera_width;
+            uint32_t camera_height;
+            uint32_t camera_fps;
         } switch_video_source;
         struct {
             uint8_t stream_type;
