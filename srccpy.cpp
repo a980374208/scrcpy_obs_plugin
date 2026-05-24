@@ -11,6 +11,13 @@
 #include <util/process_intr.h>
 #include <adb/adb.h>
 #include <nlohmann/json.hpp>
+#include <obs-frontend-api.h>
+#include <qmessagebox.h>
+#include <QMetaObject>
+
+#define INTERACTION_WARN_TITLE          obs_module_text("InteractionWarn")
+#define INTERACTION_ERROR_TEXT          obs_module_text("InteractionWarnText")
+//Inertaction failed,Make sure you have enabled USB debugging (Security Settings) and then rebooted your device.
 
 static bool await_for_signal(ServerConnectSignal &signal)
 {
@@ -49,6 +56,30 @@ static void sc_audio_demuxer_on_ended(sc_demuxer *demuxer, enum sc_demuxer_statu
 	} else if (status == SC_DEMUXER_STATUS_ERROR ||
 		   (status == SC_DEMUXER_STATUS_DISABLED && options->require_audio)) {
 		// sc_push_event(SC_EVENT_DEMUXER_ERROR);
+	}
+}
+
+static const char *get_connect_state_error_message(device_connect_state state)
+{
+	switch (state) {
+	case DEVICE_STATE_OFFLINE:
+		return obs_module_text("DeviceState.Offline");
+	case DEVICE_STATE_BOOTLOADER:
+		return obs_module_text("DeviceState.Bootloader");
+	case DEVICE_STATE_RECOVERY:
+		return obs_module_text("DeviceState.Recovery");
+	case DEVICE_STATE_UNAUTHORIZE:
+		return obs_module_text("DeviceState.Unauthorized");
+	case DEVICE_STATE_SIDELOAD:
+		return obs_module_text("DeviceState.Sideload");
+	case DEVICE_STATE_DEVICE:
+		return obs_module_text("DeviceState.Connected");
+	case DEVICE_STATE_UNKNOWN:
+	default: {
+		std::stringstream ss;
+		ss << "DeviceState.Unknown" << " (" << state << ")";
+		return obs_module_text(ss.str().c_str());
+	}
 	}
 }
 
@@ -158,6 +189,22 @@ void scrcpy::update(obs_data_t *settings)
 		int max_fps = (int)obs_data_get_int(settings, "choose_fps");
 		if (select_device.empty()) {
 			return;
+		}
+		if (device_infos.find(select_device) != device_infos.end()) {
+			auto state = device_infos[select_device].device.state;
+			if (state != DEVICE_STATE_DEVICE) {
+				QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+				if (parent_widget) {
+					const char *warn_text = get_connect_state_error_message(state);
+					QString title = QString::fromUtf8(WARN_TITLE);
+					QString text = QString::fromUtf8(warn_text);
+					QMetaObject::invokeMethod(parent_widget, [parent_widget, title, text]() {
+						QMessageBox::warning(parent_widget, title, text);
+					}, Qt::QueuedConnection);
+				}
+				
+			}
+				
 		}
 		bool serial_changed = (params.req_serial != select_device);
 		bool codec_res_fps_changed = (params.max_fps != std::to_string(max_fps));
@@ -281,6 +328,7 @@ void scrcpy::update(obs_data_t *settings)
 	server.update_params(&params);
 
 	if (controller_started) {
+		this->usb_debug_enable = false;
 		sc_controller_stop(&this->controller);
 		sc_controller_join(&this->controller);
 		controller_started = false;
@@ -367,6 +415,7 @@ void scrcpy::update(obs_data_t *settings)
 			return;
 		}
 		controller_started = true;
+		this->usb_debug_enable = true;
 	}
 }
 
@@ -495,6 +544,37 @@ void scrcpy::update_device_infos(sc_vec_adb_device_infos &device_infos)
 {
 	std::lock_guard<sc_mutex> lock(device_info_mutex);
 	this->device_infos = std::move(device_infos);
+}
+
+void scrcpy::on_interaction_focus(bool focus)
+{
+	if (focus && !this->usb_debug_enable) {
+		QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+		if (!parent_widget)
+			return;
+
+		QWidget *interact_window = nullptr;
+		QList<QWidget *> all_widgets = parent_widget->findChildren<QWidget *>();
+		for (QWidget *w : all_widgets) {
+			if (strcmp(w->metaObject()->className(), "OBSBasicInteraction") == 0) {
+				interact_window = w;
+				break;
+			}
+		}
+
+		if (interact_window) {
+			if (last_interaction_window == interact_window) {
+				return;
+			}
+			last_interaction_window = interact_window;
+		}
+
+		QString title = QString::fromUtf8(INTERACTION_WARN_TITLE);
+		QString text = QString::fromUtf8(INTERACTION_ERROR_TEXT);
+		QMetaObject::invokeMethod(parent_widget, [parent_widget, title, text]() {
+			QMessageBox::warning(parent_widget, title, text);
+		}, Qt::QueuedConnection);
+	}
 }
 
 sc_vec_adb_device_infos scrcpy::get_device_infos() {
@@ -935,6 +1015,12 @@ void scrcpy::handle_error_message(const std::string &error_msg)
 		auto j = nlohmann::json::parse(error_msg);
 		sc_error_type error_type = (sc_error_type)j.value("error_type", 0);
 		std::string error_text = j.value("error_text", "");
+
+		if (error_type == SC_ERROR_TYPE_DEVICE_DISCONNECTED) {
+			if (error_text.find("USB debugging (Security Settings)") != std::string::npos) {
+				this->usb_debug_enable = false;
+			}
+		}
 		error("[scrcpy] Device control/capture error returned from server (type=%d): %s", error_type, error_text.c_str());
 
 	} catch (const std::exception &) {

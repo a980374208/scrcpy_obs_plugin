@@ -4,6 +4,9 @@
 #include "adb/adb.h"
 #include "util/dstr.hpp"
 #include "util/str_util.h"
+#include <obs-frontend-api.h>
+#include <qmessagebox.h>
+#include <QMetaObject>
 
 #define TEXT_CAMERA_FORMAT        obs_module_text("Camera.Format%s(%s)")
 #define TEXT_CAMERA_DISPLAY       obs_module_text("Camera.Display%s")
@@ -16,6 +19,8 @@
 #define TEXT_CHOOSE_RESOLUTION    obs_module_text("ChooseResolution")
 #define TEXT_CHOOSE_FPS           obs_module_text("ChooseFPS")
 #define TEXT_SCRCPY_SOURCE        obs_module_text("AndroidDevice")
+#define EMPTY_DEVICE_TEXT         obs_module_text("No device found. Please ensure your device is connected via USB and USB debugging is enabled.")
+
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("pulgin-srccpy", "en-US")
@@ -240,6 +245,16 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	// 获取并填充已连接设备
 	sc_vec_adb_devices devices;
 	sc_adb_list_devices(bs->server.m_intr, 0, devices);
+	if (devices.size() == 0) {
+		QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+		if (parent_widget) {
+			QString title = QString::fromUtf8(WARN_TITLE);
+			QString text = QString::fromUtf8(EMPTY_DEVICE_TEXT);
+			QMetaObject::invokeMethod(parent_widget, [parent_widget, title, text]() {
+				QMessageBox::warning(parent_widget, title, text);
+			}, Qt::QueuedConnection);
+		}
+	}
 	bs->device_infos.clear();
 	if (bs->controller_started) {
 		for (const auto &device : devices) {
@@ -337,7 +352,11 @@ void register_srccpy()
 	info.key_click = [](void *data, const struct obs_key_event *event, bool key_up) {
 		static_cast<scrcpy *>(data)->send_key_click(event, key_up);
 	};
-
+	info.focus = [](void *data, bool focus) {
+		scrcpy *sc = static_cast<scrcpy *>(data);
+		sc->on_interaction_focus(focus);
+		
+	};
 	obs_register_source(&info);
 }
 

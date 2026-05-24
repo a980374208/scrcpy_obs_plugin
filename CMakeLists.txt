@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.28...3.30)
 
 add_library(plugin-srccpy MODULE)
 add_library(OBS::srccpy ALIAS plugin-srccpy)
+find_package(Qt6 REQUIRED Widgets)
 set(CORE_SOURCES
     
    
@@ -97,6 +98,7 @@ target_link_libraries(plugin-srccpy PRIVATE
   FFmpeg::swscale
   FFmpeg::swresample
   OBS::frontend-api
+  Qt::Widgets
 )
 
 # Windows-specific libraries

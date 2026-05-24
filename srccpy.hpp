@@ -9,7 +9,12 @@
 #include "control_msg.h"
 #include "controller.h"
 #include "util/sc_thread.h"
+#include <QPointer>
 
+
+#define WARN_TITLE		  obs_module_text("Warn")
+
+class QWidget;
 enum scrcpy_exit_code {
 	// Normal program termination
 	SCRCPY_EXIT_SUCCESS = 0,
@@ -41,6 +46,8 @@ public:
 
 	void update_device_infos(sc_vec_adb_device_infos &device_infos);
 
+	void on_interaction_focus(bool focus);
+
 	sc_vec_adb_device_infos get_device_infos();
 
 	static void sc_server_on_connection_failed(sc_server &server, void *userdata);
@@ -65,7 +72,9 @@ private:
 	bool video_demuxer_started = false;
 	bool audio_demuxer_started = false;
 	bool server_started = false;
+	bool usb_debug_enable = false;
 	obs_source_t *source;
+	QPointer<QWidget> last_interaction_window;
 
 public:
 	sc_server server;
