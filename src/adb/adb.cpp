@@ -660,4 +660,39 @@ std::string sc_adb_get_device_ip(sc_intr &intr, const std::string &serial, unsig
 	return sc_adb_parse_device_ip(buf);
 }
 
+bool sc_adb_pair(sc_intr &intr, const std::string &ip_port, const std::string &code, std::string &out_err)
+{
+	assert(!ip_port.empty() && !code.empty());
+	std::vector<std::string> argv = SC_ADB_COMMAND("pair", ip_port, code);
+
+	sc_pipe pout;
+	sc_pid pid = sc_adb_execute_p(argv, 0, &pout);
+	if (pid == SC_PROCESS_NONE) {
+		out_err = "Could not execute \"adb pair\"";
+		return false;
+	}
+
+	char buf[512];
+	ssize_t r = sc_pipe_read_all_intr(intr, pid, pout, buf, sizeof(buf) - 1);
+	sc_pipe_close(pout);
+
+	bool ok = process_check_success_intr(intr, pid, "adb pair", 0);
+	if (r > 0) {
+		buf[r] = '\0';
+		std::string output(buf);
+		while (!output.empty() && (output.back() == '\r' || output.back() == '\n' || output.back() == ' ')) {
+			output.pop_back();
+		}
+		if (ok && output.find("Successfully paired") != std::string::npos) {
+			return true;
+		}
+		out_err = output;
+	} else {
+		out_err = "No output returned from adb pair or process failed";
+	}
+
+	return false;
+}
+
+
 

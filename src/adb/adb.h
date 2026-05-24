@@ -81,4 +81,7 @@ bool sc_adb_disconnect(sc_intr &intr, const std::string &ip_port, unsigned flags
 
 std::string sc_adb_get_device_ip(sc_intr &intr, const std::string &serial, unsigned flags);
 
+bool sc_adb_pair(sc_intr &intr, const std::string &ip_port, const std::string &code, std::string &out_err);
+
+
 

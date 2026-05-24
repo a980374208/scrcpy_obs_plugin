@@ -89,6 +89,8 @@ public:
 	bool controller_started = false;
 	puse_stream_type stream_pause_type = NO_PAUSE;
 	bool request_device_info();
+	obs_source_t *get_source() const { return source; }
+
 
 private:
 	sc_mutex device_info_mutex;

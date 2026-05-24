@@ -2,11 +2,21 @@
 #include <util/windows/win-version.h>
 #include "srccpy.hpp"
 #include "adb/adb.h"
+#include "ui/pairing-dialog.h"
+
 #include "util/dstr.hpp"
 #include "util/str_util.h"
 #include <obs-frontend-api.h>
 #include <qmessagebox.h>
 #include <QMetaObject>
+#include <thread>
+#include <QDialog>
+#include <QLineEdit>
+#include <QFormLayout>
+#include <QRegularExpressionValidator>
+#include <QPushButton>
+#include <QHBoxLayout>
+
 
 #define TEXT_CAMERA_FORMAT        obs_module_text("Camera.Format%s(%s)")
 #define TEXT_CAMERA_DISPLAY       obs_module_text("Camera.Display%s")
@@ -203,40 +213,61 @@ static auto on_device_changed(void *ptr, obs_properties_t *props, obs_property_t
 	return true;
 };
 
+static auto wifi_button_click(obs_properties_t *props, obs_property_t *property, void *data) {
+	scrcpy *bs = static_cast<scrcpy *>(data);
+	QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+	
+	PairingDialog dialog(bs, parent_widget);
+	
+	obs_data_t *settings = obs_source_get_settings(bs->get_source());
+	std::string default_connect_addr = obs_data_get_string(settings, "pair_info");
+	obs_data_release(settings);
+	
+	dialog.edit_connect_addr->setText(QString::fromStdString(default_connect_addr));
+	
+	dialog.exec();
+	
+	return true;
+}
 
+static auto device_refresh_btn_click(obs_properties_t *props, obs_property_t *, void *data)
+{
+	scrcpy *bs = static_cast<scrcpy *>(data);
+	bs->device_infos.clear();
+	sc_vec_adb_devices devices;
+	sc_adb_list_devices(bs->server.m_intr, 0, devices);
+	if (bs->controller_started) {
+		for (const auto &device : devices) {
+			if (bs->params.req_serial == device.serial) {
+				bs->request_device_info();
+			} else {
+				bs->get_device_infos(bs->device_infos, device.serial);
+			}
+		}
+	} else {
+		for (const auto &device : devices) {
+			bs->get_device_infos(bs->device_infos, device.serial);
+		}
+	}
+	obs_property_t *dev_prop = obs_properties_get(props, "device_list");
+	if (dev_prop) {
+		obs_property_list_clear(dev_prop); // 必须手动清空旧的下拉列表选项
+		for (const auto &device_info : bs->device_infos) {
+			AddDevice(dev_prop, device_info.second); // 重新填充选项
+		}
+	}
 
-
-
+	return true;
+}
 
 static obs_properties_t *scrcpy_source_get_properties(void *data)
 {
+
 	obs_properties_t *props = obs_properties_create();
 	scrcpy *bs = static_cast<scrcpy *>(data);
 	// 1. 刷新设备按钮
 	obs_properties_add_button2(
-		props, "refresh_devices", TEXT_REFRESH_DEVICE_LIST,
-		[](obs_properties_t *props, obs_property_t *, void *data) {
-			scrcpy *bs = static_cast<scrcpy *>(data);
-			bs->device_infos.clear();
-			sc_vec_adb_devices devices;
-			sc_adb_list_devices(bs->server.m_intr, 0, devices);
-			for (const auto &device : devices) {
-				if (bs->params.req_serial == device.serial) {
-					bs->request_device_info();
-				} else {
-					bs->get_device_infos(bs->device_infos, device.serial);
-				}
-			}
-			obs_property_t *dev_prop = obs_properties_get(props, "device_list");
-			if (dev_prop) {
-				obs_property_list_clear(dev_prop); // 必须手动清空旧的下拉列表选项
-				for (const auto &device_info : bs->device_infos) {
-					AddDevice(dev_prop, device_info.second); // 重新填充选项
-				}
-			}
-
-			return true;
-		},
+		props, "refresh_devices", TEXT_REFRESH_DEVICE_LIST, device_refresh_btn_click,
 		bs);
 	obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 	// 2. 设备改变回调
@@ -295,7 +326,11 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	auto prop = obs_properties_add_bool(props, "wifi_pair", DEVICE_ENABLE_WIFI);
 	prop = obs_properties_add_text(props, "pair_info", DEVICE_PAIR_INFO, OBS_TEXT_DEFAULT);
 	obs_property_set_long_description(prop, DEVICE_TIP_PAIR_INFO);
+
+	obs_properties_add_button2(props, "wifi_pair_btn", obs_module_text("PairDevice"), wifi_button_click, bs);
+
 	return props;
+
 }
 
 void register_srccpy()
