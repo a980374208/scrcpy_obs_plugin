@@ -29,7 +29,7 @@
 #define TEXT_CHOOSE_RESOLUTION    obs_module_text("ChooseResolution")
 #define TEXT_CHOOSE_FPS           obs_module_text("ChooseFPS")
 #define TEXT_SCRCPY_SOURCE        obs_module_text("AndroidDevice")
-#define EMPTY_DEVICE_TEXT         obs_module_text("No device found. Please ensure your device is connected via USB and USB debugging is enabled.")
+#define EMPTY_DEVICE_TEXT         obs_module_text("EmptyDeviceText")
 #define DEVICE_TIP_PAIR_INFO	  obs_module_text("Device.ToolTip.PairInfo")
 #define DEVICE_PAIR_INFO	  obs_module_text("Device.PairInfo")
 #define DEVICE_ENABLE_WIFI	  obs_module_text("Device.EnableWiFi")

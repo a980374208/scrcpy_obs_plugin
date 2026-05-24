@@ -33,6 +33,7 @@ set(CORE_SOURCES
     src/codec/packet_sink.cpp
     src/codec/packet_merge.cpp
     src/srccpy-plugin-main.cpp
+    src/ui/pairing-dialog.cpp
 )
 
 # 头文件列表
@@ -67,6 +68,7 @@ set(CORE_HEADERS
     src/codec/packet_source.h
     src/codec/packet_sink.h
     src/codec/packet_merge.h
+    src/ui/pairing-dialog.h
 )
 
 target_sources(
