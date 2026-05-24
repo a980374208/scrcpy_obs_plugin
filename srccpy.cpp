@@ -187,6 +187,8 @@ void scrcpy::update(obs_data_t *settings)
 		sc_video_source choose_src = static_cast<enum sc_video_source>(obs_data_get_int(settings, "choose_src"));
 		std::string choose_capture = obs_data_get_string(settings, "choose_capture");
 		int max_fps = (int)obs_data_get_int(settings, "choose_fps");
+		std::string pair_info = obs_data_get_string(settings, "pair_info");
+		bool wifi_pair = obs_data_get_bool(settings, "wifi_pair");
 		if (select_device.empty()) {
 			return;
 		}
@@ -317,7 +319,10 @@ void scrcpy::update(obs_data_t *settings)
 			params.max_fps = std::to_string(max_fps);
 			updated = true;
 		}
-
+		params.tcpip = wifi_pair;
+		if (params.tcpip) {
+			params.tcpip_dst = pair_info;
+		}
 		
 	}
 	if (!updated && server_started) {
@@ -448,7 +453,7 @@ void scrcpy::get_device_infos(sc_vec_adb_device_infos &device_infos, const std::
 			sc_adb_device_info info{};
 
 			if (j.contains("serial") && j["serial"].is_string()) {
-				info.device.serial = j["serial"].get<std::string>();
+				info.device.serial = serial;
 			}
 			if (j.contains("state") && j["state"].is_string()) {
 				info.device.state = get_device_state_from_string(j["state"].get<std::string>());
@@ -906,7 +911,12 @@ void scrcpy::parse_and_update_device_info(const std::string &json_str)
 		sc_adb_device_info info{};
 
 		if (j.contains("serial") && j["serial"].is_string()) {
-			info.device.serial = j["serial"].get<std::string>();
+			if (this->params.req_serial.empty()) {
+				info.device.serial = j["serial"].get<std::string>();
+			} else {
+				info.device.serial = this->params.req_serial;
+			}
+			
 		}
 		if (j.contains("state") && j["state"].is_string()) {
 			info.device.state = get_device_state_from_string(j["state"].get<std::string>());

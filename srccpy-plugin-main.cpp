@@ -20,7 +20,9 @@
 #define TEXT_CHOOSE_FPS           obs_module_text("ChooseFPS")
 #define TEXT_SCRCPY_SOURCE        obs_module_text("AndroidDevice")
 #define EMPTY_DEVICE_TEXT         obs_module_text("No device found. Please ensure your device is connected via USB and USB debugging is enabled.")
-
+#define DEVICE_TIP_PAIR_INFO	  obs_module_text("Device.ToolTip.PairInfo")
+#define DEVICE_PAIR_INFO	  obs_module_text("Device.PairInfo")
+#define DEVICE_ENABLE_WIFI	  obs_module_text("Device.EnableWiFi")
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("pulgin-srccpy", "en-US")
@@ -289,6 +291,10 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 				OBS_COMBO_FORMAT_STRING);
 	obs_properties_add_list(props, "choose_fps", TEXT_CHOOSE_FPS, OBS_COMBO_TYPE_LIST,
 				OBS_COMBO_FORMAT_INT);
+
+	auto prop = obs_properties_add_bool(props, "wifi_pair", DEVICE_ENABLE_WIFI);
+	prop = obs_properties_add_text(props, "pair_info", DEVICE_PAIR_INFO, OBS_TEXT_DEFAULT);
+	obs_property_set_long_description(prop, DEVICE_TIP_PAIR_INFO);
 	return props;
 }
 

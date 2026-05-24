@@ -8,3 +8,6 @@
 bool sc_adb_parse_devices(std::string_view input, std::vector<sc_adb_device> &out);
 
 bool sc_adb_parse_device(std::string_view line, sc_adb_device &device);
+
+std::string sc_adb_parse_device_ip(std::string_view output);
+

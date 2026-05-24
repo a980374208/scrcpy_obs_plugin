@@ -1,6 +1,8 @@
 #include "server.hpp"
 #include "adb/adb.h"
+#include "util/str_util.h"
 #include <cassert>
+
 #include <memory>
 #include "adb/adb_device.h"
 #include "util/sc_file.h"
@@ -554,24 +556,35 @@ int sc_server::run_server(void *data)
 {  
 	auto *server = static_cast<sc_server *>(data);
 	const auto &params = server->m_params;
-	
-	// 2. 选择设备
-	sc_adb_device_selector selector{};
-	if (const char *env_serial = getenv("ANDROID_SERIAL")) {
-		selector.type = SC_ADB_DEVICE_SELECT_SERIAL;
-		selector.serial = env_serial;
-	} else {
-		selector.type = SC_ADB_DEVICE_SELECT_ALL;
+
+
+	if (params.tcpip){
+		std::string tcpip_dst = params.tcpip_dst;
+		bool plus = !tcpip_dst.empty() && tcpip_dst[0] == '+';
+		if (plus) {
+			tcpip_dst = tcpip_dst.substr(1);
+		}
+		bool ok = server->sc_server_configure_tcpip_known_address(tcpip_dst, plus);
+		if (!ok) {
+			server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
+			return -1;
+		}
 	}
 
-	// 3. 确定 serial
-	if (!params.tcpip) {
-		server->m_serial = params.req_serial;
-	}
 	const std::string serial = server->m_serial;
 	if (serial.empty()) {
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
+	}
+
+	// Kill any existing stale scrcpy-server process on the device
+	std::vector<std::string> kill_cmd = { sc_adb_get_executable(), "-s", serial, "shell", "pkill", "-f", "com.genymobile.scrcpy.Server" };
+	sc_pid kill_pid = sc_adb_execute(kill_cmd, SC_ADB_SILENT);
+	if (kill_pid != SC_PROCESS_NONE) {
+		sc_process_wait(kill_pid, true);
+		// Wait a short delay to let the system release the camera resource
+		sc_tick delay = sc_tick_now() + SC_TICK_FROM_MS(500);
+		server->sc_server_sleep(delay);
 	}
 
 	// 4. push server
@@ -593,6 +606,10 @@ int sc_server::run_server(void *data)
 	bool force_adb_forward = params.force_adb_forward;
 	if ((params.tunnel_host || params.tunnel_port) && !force_adb_forward) {
 		scrcpy_log(LOG_INFO, "Tunnel host/port is set, force-adb-forward automatically enabled.");
+		force_adb_forward = true;
+	}
+	if (sc_adb_device_get_type(serial) == SC_ADB_DEVICE_TYPE_TCPIP && !force_adb_forward) {
+		scrcpy_log(LOG_INFO, "TCP/IP device detected, force-adb-forward automatically enabled.");
 		force_adb_forward = true;
 	}
 	if (!server->m_tunnel.adb_tunnel_open(server->m_intr, serial, server->m_device_socket_name, params.port_range,
@@ -693,4 +710,130 @@ int sc_server::run_server(void *data)
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
+}
+
+bool sc_server::sc_server_configure_tcpip_unknown_address(const std::string &serial) {
+	bool is_already_tcpip = sc_adb_device_get_type(serial) == SC_ADB_DEVICE_TYPE_TCPIP;
+	if (is_already_tcpip) {
+		scrcpy_log(LOG_INFO, "Device already connected via TCP/IP: %s", serial.c_str());
+		this->m_serial = serial;
+		return true;
+	}
+
+	std::string ip_port = this->sc_server_switch_to_tcpip(serial);
+	if (ip_port.empty()) {
+		return false;
+	}
+
+	this->m_serial = ip_port;
+	return this->sc_server_connect_to_tcpip(ip_port, false);
+}
+
+bool sc_server::sc_server_configure_tcpip_known_address(const std::string &addr, bool disconnect) {
+	bool contains_port = addr.find(':') != std::string::npos;
+	std::string ip_port = contains_port ? addr : this->append_port(addr, SC_ADB_PORT_DEFAULT);
+
+	this->m_serial = ip_port;
+	return this->sc_server_connect_to_tcpip(ip_port, disconnect);
+}
+
+bool sc_server::sc_server_connect_to_tcpip(const std::string &ip_port, bool disconnect) {
+	if (disconnect) {
+		// Error expected if not connected, do not report any error
+		sc_adb_disconnect(this->m_intr, ip_port, SC_ADB_SILENT);
+	}
+
+	scrcpy_log(LOG_INFO, "Connecting to %s...", ip_port.c_str());
+
+	bool ok = sc_adb_connect(this->m_intr, ip_port, 0);
+	if (!ok) {
+		error("Could not connect to %s", ip_port.c_str());
+		return false;
+	}
+
+	scrcpy_log(LOG_INFO, "Connected to %s", ip_port.c_str());
+	return true;
+}
+
+std::string sc_server::sc_server_switch_to_tcpip(const std::string &serial) {
+	assert(!serial.empty());
+
+	scrcpy_log(LOG_INFO, "Switching device %s to TCP/IP...", serial.c_str());
+
+	std::string ip = sc_adb_get_device_ip(this->m_intr, serial, 0);
+	if (ip.empty()) {
+		error("Device IP not found");
+		return {};
+	}
+
+	uint16_t adb_port = this->get_adb_tcp_port(serial);
+	if (adb_port) {
+		scrcpy_log(LOG_INFO, "TCP/IP mode already enabled on port %u", adb_port);
+	} else {
+		scrcpy_log(LOG_INFO, "Enabling TCP/IP mode on port %d...", SC_ADB_PORT_DEFAULT);
+
+		bool ok = sc_adb_tcpip(this->m_intr, serial, SC_ADB_PORT_DEFAULT, SC_ADB_NO_STDOUT);
+		if (!ok) {
+			error("Could not restart adbd in TCP/IP mode");
+			return {};
+		}
+
+		unsigned attempts = 40;
+		sc_tick delay = SC_TICK_FROM_MS(250);
+		ok = this->wait_tcpip_mode_enabled(serial, SC_ADB_PORT_DEFAULT, attempts, delay);
+		if (!ok) {
+			return {};
+		}
+
+		adb_port = SC_ADB_PORT_DEFAULT;
+		scrcpy_log(LOG_INFO, "TCP/IP mode enabled on port %d", SC_ADB_PORT_DEFAULT);
+	}
+
+	return this->append_port(ip, adb_port);
+}
+
+uint16_t sc_server::get_adb_tcp_port(const std::string &serial) {
+	std::string current_port = sc_adb_getprop(this->m_intr, serial, "service.adb.tcp.port", SC_ADB_SILENT);
+	if (current_port.empty()) {
+		return 0;
+	}
+
+	auto val = sc_str_parse_integer(current_port);
+	if (!val) {
+		return 0;
+	}
+
+	long value = *val;
+	if (value < 0 || value > 0xFFFF) {
+		return 0;
+	}
+
+	return static_cast<uint16_t>(value);
+}
+
+bool sc_server::wait_tcpip_mode_enabled(const std::string &serial, uint16_t expected_port, unsigned attempts, sc_tick delay) {
+	uint16_t adb_port = this->get_adb_tcp_port(serial);
+	if (adb_port == expected_port) {
+		return true;
+	}
+
+	scrcpy_log(LOG_INFO, "Waiting for TCP/IP mode enabled...");
+
+	do {
+		sc_tick deadline = sc_tick_now() + delay;
+		if (!this->sc_server_sleep(deadline)) {
+			scrcpy_log(LOG_INFO, "TCP/IP mode waiting interrupted");
+			return false;
+		}
+
+		adb_port = this->get_adb_tcp_port(serial);
+		if (adb_port == expected_port) {
+			return true;
+		}
+	} while (--attempts);
+	return false;
+}
+
+std::string sc_server::append_port(const std::string &ip, uint16_t port) {
+	return ip + ":" + std::to_string(port);
 }

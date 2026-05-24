@@ -155,7 +155,14 @@ public:
 private:
 	static int run_server(void *);
 
-	
+	bool sc_server_configure_tcpip_unknown_address(const std::string &serial);
+	bool sc_server_configure_tcpip_known_address(const std::string &addr, bool disconnect);
+	bool sc_server_connect_to_tcpip(const std::string &ip_port, bool disconnect);
+	std::string sc_server_switch_to_tcpip(const std::string &serial);
+	uint16_t get_adb_tcp_port(const std::string &serial);
+	bool wait_tcpip_mode_enabled(const std::string &serial, uint16_t expected_port, unsigned attempts, sc_tick delay);
+	static std::string append_port(const std::string &ip, uint16_t port);
 };
+
 
 #endif // SC_SERVER_HPP

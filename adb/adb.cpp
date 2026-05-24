@@ -571,3 +571,93 @@ bool sc_adb_kill_server(sc_intr &intr, unsigned flags)
 	return process_check_success_intr(intr, pid, "adb kill-server", flags);
 }
 
+bool sc_adb_tcpip(sc_intr &intr, const std::string &serial, uint16_t port, unsigned flags)
+{
+	assert(!serial.empty());
+	std::string port_string = std::to_string(port);
+	std::vector<std::string> argv = SC_ADB_COMMAND("-s", serial, "tcpip", port_string);
+	sc_pid pid = sc_adb_execute(argv, flags);
+	return process_check_success_intr(intr, pid, "adb tcpip", flags);
+}
+
+bool sc_adb_connect(sc_intr &intr, const std::string &ip_port, unsigned flags)
+{
+	assert(!ip_port.empty());
+	std::vector<std::string> argv = SC_ADB_COMMAND("connect", ip_port);
+
+	sc_pipe pout;
+	sc_pid pid = sc_adb_execute_p(argv, flags, &pout);
+	if (pid == SC_PROCESS_NONE) {
+		error("Could not execute \"adb connect\"");
+		return false;
+	}
+
+	char buf[128];
+	ssize_t r = sc_pipe_read_all_intr(intr, pid, pout, buf, sizeof(buf) - 1);
+	sc_pipe_close(pout);
+
+	bool ok = process_check_success_intr(intr, pid, "adb connect", flags);
+	if (!ok) {
+		return false;
+	}
+
+	if (r == -1) {
+		return false;
+	}
+
+	buf[r] = '\0';
+
+	ok = !strncmp("connected", buf, sizeof("connected") - 1) ||
+	     !strncmp("already connected", buf, sizeof("already connected") - 1);
+	if (!ok && !(flags & SC_ADB_NO_STDERR)) {
+		size_t len = strcspn(buf, "\r\n");
+		buf[len] = '\0';
+		error("%s", buf);
+	}
+	return ok;
+}
+
+bool sc_adb_disconnect(sc_intr &intr, const std::string &ip_port, unsigned flags)
+{
+	assert(!ip_port.empty());
+	std::vector<std::string> argv = SC_ADB_COMMAND("disconnect", ip_port);
+	sc_pid pid = sc_adb_execute(argv, flags);
+	return process_check_success_intr(intr, pid, "adb disconnect", flags);
+}
+
+std::string sc_adb_get_device_ip(sc_intr &intr, const std::string &serial, unsigned flags)
+{
+	assert(!serial.empty());
+	std::vector<std::string> argv = SC_ADB_COMMAND("-s", serial, "shell", "ip", "route");
+
+	sc_pipe pout;
+	sc_pid pid = sc_adb_execute_p(argv, flags, &pout);
+	if (pid == SC_PROCESS_NONE) {
+		scrcpy_log(LOG_DEBUG, "Could not execute \"ip route\"");
+		return {};
+	}
+
+	char buf[1024];
+	ssize_t r = sc_pipe_read_all_intr(intr, pid, pout, buf, sizeof(buf) - 1);
+	sc_pipe_close(pout);
+
+	bool ok = process_check_success_intr(intr, pid, "ip route", flags);
+	if (!ok) {
+		return {};
+	}
+
+	if (r == -1) {
+		return {};
+	}
+
+	if (static_cast<size_t>(r) == sizeof(buf) - 1) {
+		scrcpy_log(LOG_WARNING, "Result of \"ip route\" does not fit in 1Kb.");
+		return {};
+	}
+
+	buf[r] = '\0';
+
+	return sc_adb_parse_device_ip(buf);
+}
+
+

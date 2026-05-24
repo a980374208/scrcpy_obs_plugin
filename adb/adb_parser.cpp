@@ -122,3 +122,60 @@ bool sc_adb_parse_device(std::string_view line, sc_adb_device &device)
 
 	return true;
 }
+
+std::string sc_adb_parse_device_ip(std::string_view output)
+{
+	std::string_view input = output;
+	while (!input.empty()) {
+		auto pos = input.find('\n');
+		std::string_view line = (pos == std::string_view::npos) ? input : input.substr(0, pos);
+		input.remove_prefix(pos == std::string_view::npos ? input.size() : pos + 1);
+
+		// Trim trailing \r or spaces
+		while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+			line.remove_suffix(1);
+		}
+		if (line.empty()) {
+			continue;
+		}
+
+		// Split line by whitespace
+		std::vector<std::string> tokens;
+		std::string current;
+		for (char c : line) {
+			if (c == ' ' || c == '\t') {
+				if (!current.empty()) {
+					tokens.push_back(current);
+					current.clear();
+				}
+			} else {
+				current.push_back(c);
+			}
+		}
+		if (!current.empty()) {
+			tokens.push_back(current);
+		}
+
+		// Look for: dev <wlan...> ... src <ip>
+		size_t dev_idx = std::string::npos;
+		size_t src_idx = std::string::npos;
+		for (size_t i = 0; i < tokens.size(); ++i) {
+			if (tokens[i] == "dev") {
+				dev_idx = i;
+			} else if (tokens[i] == "src") {
+				src_idx = i;
+			}
+		}
+
+		if (dev_idx != std::string::npos && src_idx != std::string::npos &&
+			dev_idx + 1 < tokens.size() && src_idx + 1 < tokens.size()) {
+			std::string dev_name = tokens[dev_idx + 1];
+			// Only consider interfaces starting with "wlan"
+			if (dev_name.rfind("wlan", 0) == 0) {
+				return tokens[src_idx + 1];
+			}
+		}
+	}
+	return {};
+}
+

@@ -71,3 +71,14 @@ bool sc_adb_forward(sc_intr &intr, const std::string &serial, uint16_t local_por
 
 bool sc_adb_kill_server(sc_intr &intr, unsigned flags);
 
+std::string sc_adb_getprop(sc_intr &intr, const std::string &serial, const char *prop, unsigned flags);
+
+bool sc_adb_tcpip(sc_intr &intr, const std::string &serial, uint16_t port, unsigned flags);
+
+bool sc_adb_connect(sc_intr &intr, const std::string &ip_port, unsigned flags);
+
+bool sc_adb_disconnect(sc_intr &intr, const std::string &ip_port, unsigned flags);
+
+std::string sc_adb_get_device_ip(sc_intr &intr, const std::string &serial, unsigned flags);
+
+
