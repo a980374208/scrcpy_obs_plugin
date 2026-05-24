@@ -4,72 +4,69 @@ add_library(plugin-srccpy MODULE)
 add_library(OBS::srccpy ALIAS plugin-srccpy)
 find_package(Qt6 REQUIRED Widgets)
 set(CORE_SOURCES
-    
-   
-    device.cpp
-    controller.cpp
-    srccpy.cpp
-    control_msg.cpp
-    server/server.cpp
-    server/sc_server_cmd_builder.cpp
-    adb/adb.cpp
-    adb/adb_tunnel.cpp
-    adb/adb_device.cpp
-    adb/adb_parser.cpp
-    util/rand.cpp
-    util/sc_intr.cpp
-    util/tick.cpp
-    util/str_util.cpp
-    util/sc_file.cpp
-    util/sc_log.cpp
-    util/options.cpp
-    util/sc_thread.cpp
-    util/sc_process.cpp
-    util/process_intr.cpp
-    util/common.cpp
-    util/net.cpp
-    util/env.cpp
-    event/sc_event.cpp
-    codec/demuxer.cpp
-    codec/packet_source.cpp
-    codec/packet_sink.cpp
-    codec/packet_merge.cpp
-    srccpy-plugin-main.cpp
+    src/device.cpp
+    src/controller.cpp
+    src/srccpy.cpp
+    src/control_msg.cpp
+    src/server/server.cpp
+    src/server/sc_server_cmd_builder.cpp
+    src/adb/adb.cpp
+    src/adb/adb_tunnel.cpp
+    src/adb/adb_device.cpp
+    src/adb/adb_parser.cpp
+    src/util/rand.cpp
+    src/util/sc_intr.cpp
+    src/util/tick.cpp
+    src/util/str_util.cpp
+    src/util/sc_file.cpp
+    src/util/sc_log.cpp
+    src/util/options.cpp
+    src/util/sc_thread.cpp
+    src/util/sc_process.cpp
+    src/util/process_intr.cpp
+    src/util/common.cpp
+    src/util/net.cpp
+    src/util/env.cpp
+    src/event/sc_event.cpp
+    src/codec/demuxer.cpp
+    src/codec/packet_source.cpp
+    src/codec/packet_sink.cpp
+    src/codec/packet_merge.cpp
+    src/srccpy-plugin-main.cpp
 )
 
 # 头文件列表
 set(CORE_HEADERS
-
-    device.h
-    controller.h
-    compat.h
-    srccpy.hpp
-    control_msg.h
-    coords.h
-    server/server.hpp
-    server/sc_server_cmd_builder.hpp
-    adb/adb.h
-    adb/adb_tunnel.h
-    adb/adb_device.h
-    adb/adb_parser.h
-    util/str_util.h
-    util/rand.h
-    util/sc_intr.h
-    util/tick.h
-    util/sc_file.h
-    util/sc_log.h
-    util/env.h
-    util/common.h
-    util/net.h
-    util/options.h
-    util/sc_thread.h
-    util/sc_process.h
-    util/process_intr.h
-    event/sc_event.h
-    codec/demuxer.h
-    codec/packet_source.h
-    codec/packet_sink.h
-    codec/packet_merge.h
+    src/device.h
+    src/controller.h
+    src/compat.h
+    src/srccpy.hpp
+    src/control_msg.h
+    src/coords.h
+    src/server/server.hpp
+    src/server/sc_server_cmd_builder.hpp
+    src/adb/adb.h
+    src/adb/adb_tunnel.h
+    src/adb/adb_device.h
+    src/adb/adb_parser.h
+    src/util/str_util.h
+    src/util/rand.h
+    src/util/sc_intr.h
+    src/util/tick.h
+    src/util/sc_file.h
+    src/util/sc_log.h
+    src/util/env.h
+    src/util/common.h
+    src/util/net.h
+    src/util/options.h
+    src/util/sc_thread.h
+    src/util/sc_process.h
+    src/util/process_intr.h
+    src/event/sc_event.h
+    src/codec/demuxer.h
+    src/codec/packet_source.h
+    src/codec/packet_sink.h
+    src/codec/packet_merge.h
 )
 
 target_sources(
@@ -85,8 +82,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "Header Files" FILES ${CO
 configure_file(cmake/windows/obs-module.rc.in win-wasapi.rc)
 target_sources(plugin-srccpy PRIVATE win-wasapi.rc)
 target_include_directories(plugin-srccpy PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}/util
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/util
 )
 
 target_link_libraries(plugin-srccpy PRIVATE
