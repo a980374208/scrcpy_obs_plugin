@@ -127,6 +127,7 @@ struct sc_control_msg {
         struct {
             uint8_t stream_type;
             bool pause;
+            uint8_t audio_source;
         } pause_resume;
     };
 };

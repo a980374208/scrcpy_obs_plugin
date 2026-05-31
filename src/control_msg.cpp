@@ -216,7 +216,8 @@ sc_control_msg_serialize(const struct sc_control_msg *msg, uint8_t *buf) {
         case SC_CONTROL_MSG_TYPE_PAUSE_RESUME_STREAM:
             buf[1] = msg->pause_resume.stream_type;
             buf[2] = msg->pause_resume.pause;
-            return 3;
+            buf[3] = msg->pause_resume.audio_source;
+            return 4;
         case SC_CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL:
         case SC_CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL:
         case SC_CONTROL_MSG_TYPE_COLLAPSE_PANELS:
@@ -327,9 +328,10 @@ sc_control_msg_log(const struct sc_control_msg *msg) {
             LOG_CMSG("get device info");
             break;
         case SC_CONTROL_MSG_TYPE_PAUSE_RESUME_STREAM:
-            LOG_CMSG("pause resume stream: type=%u pause=%s",
+            LOG_CMSG("pause resume stream: type=%u pause=%s audio_source=%u",
                      msg->pause_resume.stream_type,
-                     msg->pause_resume.pause ? "true" : "false");
+                     msg->pause_resume.pause ? "true" : "false",
+                     msg->pause_resume.audio_source);
             break;
         case SC_CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL:
             LOG_CMSG("expand notification panel");

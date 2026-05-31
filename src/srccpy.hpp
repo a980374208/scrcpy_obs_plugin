@@ -66,7 +66,7 @@ public:
 	void send_mouse_move(const obs_mouse_event *event, bool mouse_leave);
 	void send_mouse_wheel(const obs_mouse_event *event, int x_delta, int y_delta);
 	void send_key_click(const obs_key_event *event, bool key_up);
-	bool set_stream_paused(puse_stream_type stream_type, bool pause);
+	bool set_stream_paused(puse_stream_type stream_type, bool pause, uint8_t audio_source = 0);
 
 private:
 	uint32_t generate_scid();

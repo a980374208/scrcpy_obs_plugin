@@ -403,14 +403,13 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 			}
 		}
 
-		if (audio) {
-			audio_socket = this->m_intr.net_accept_intr(this->m_tunnel.m_server_socket);
-			if (audio_socket == SC_SOCKET_NONE) {
-				error("Server connection failed: audio socket accept failed");
-				cleanup_sockets(video_socket, SC_SOCKET_NONE, SC_SOCKET_NONE);
-				close_tunnel();
-				return false;
-			}
+		// 强制无视 audio 参数，建立音频 Socket 连接
+		audio_socket = this->m_intr.net_accept_intr(this->m_tunnel.m_server_socket);
+		if (audio_socket == SC_SOCKET_NONE) {
+			error("Server connection failed: audio socket accept failed");
+			cleanup_sockets(video_socket, SC_SOCKET_NONE, SC_SOCKET_NONE);
+			close_tunnel();
+			return false;
 		}
 
 		if (control) {
@@ -440,19 +439,18 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 			video_socket = first_socket;
 		}
 
-		if (audio) {
-			if (video) {
-				audio_socket = net_socket();
-				if (audio_socket == SC_SOCKET_NONE ||
-					!this->m_intr.net_connect_intr(audio_socket, tunnel_host, tunnel_port)) {
-					error("Server connection failed: audio socket connect failed");
-					cleanup_sockets(video_socket, audio_socket, SC_SOCKET_NONE);
-					close_tunnel();
-					return false;
-				}
-			} else {
-				audio_socket = first_socket;
+		// 强制无视 audio 参数，建立音频 Socket 连接
+		if (video) {
+			audio_socket = net_socket();
+			if (audio_socket == SC_SOCKET_NONE ||
+				!this->m_intr.net_connect_intr(audio_socket, tunnel_host, tunnel_port)) {
+				error("Server connection failed: audio socket connect failed");
+				cleanup_sockets(video_socket, audio_socket, SC_SOCKET_NONE);
+				close_tunnel();
+				return false;
 			}
+		} else {
+			audio_socket = first_socket;
 		}
 
 		if (control) {

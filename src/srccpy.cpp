@@ -257,7 +257,7 @@ void scrcpy::update(obs_data_t *settings)
 		video_demuxer_started = true;
 	}
 
-	if (params.audio && this->server.m_audio_socket != SC_SOCKET_NONE) {
+	if (/*params.audio && */this->server.m_audio_socket != SC_SOCKET_NONE) {
 		std::shared_ptr<sc_demuxer_callbacks> audio_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
 		audio_demuxer_cbs->on_ended = sc_audio_demuxer_on_ended;
 		this->audio_demuxer.init("audio", this->server.m_audio_socket, audio_demuxer_cbs, NULL);
@@ -379,7 +379,7 @@ bool scrcpy::should_update(obs_data_t *settings)
 		bool is_return = false;
 		if (params.audio != audio_enable) {
 			if (controller_started) {
-				set_stream_paused(PAUSE_AUDIO, !audio_enable);
+				set_stream_paused(PAUSE_AUDIO, !audio_enable, (uint8_t)params.audio_source);
 				params.audio = audio_enable;
 				is_return = true;
 			} else {
@@ -415,6 +415,7 @@ bool scrcpy::should_update(obs_data_t *settings)
 			sc_control_msg_destroy(&msg);
 
 			params.video_source = choose_src;
+			params.audio_source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? SC_AUDIO_SOURCE_OUTPUT : SC_AUDIO_SOURCE_MIC;
 			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
 				params.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
 				params.max_size = cx > cy ? cx : cy;
@@ -423,6 +424,10 @@ bool scrcpy::should_update(obs_data_t *settings)
 				params.camera_size = select_res;
 			}
 			params.max_fps = std::to_string(max_fps);
+
+			if (audio_enable) {
+				set_stream_paused(PAUSE_AUDIO, false, (uint8_t)params.audio_source);
+			}
 
 			server.update_params(&params);
 			is_return = true;
@@ -436,6 +441,7 @@ bool scrcpy::should_update(obs_data_t *settings)
 		}
 		if (params.video_source != choose_src) {
 			params.video_source = choose_src;
+			params.audio_source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? SC_AUDIO_SOURCE_OUTPUT : SC_AUDIO_SOURCE_MIC;
 			updated = true;
 		}
 		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
@@ -906,13 +912,14 @@ void scrcpy::send_key_click(const obs_key_event *event, bool key_up)
 	}
 }
 
-bool scrcpy::set_stream_paused(puse_stream_type stream_type, bool pause)
+bool scrcpy::set_stream_paused(puse_stream_type stream_type, bool pause, uint8_t audio_source)
 {
 	sc_control_msg msg;
 	memset(&msg, 0, sizeof(msg));
 	msg.type = SC_CONTROL_MSG_TYPE_PAUSE_RESUME_STREAM;
 	msg.pause_resume.stream_type = stream_type;
 	msg.pause_resume.pause = pause;
+	msg.pause_resume.audio_source = audio_source;
 	bool ok = send_control_msg(msg);
 	sc_control_msg_destroy(&msg);
 	return ok;
