@@ -6,7 +6,6 @@ extern "C" {
 #include "util/net.h"
 #include "codec/packet_source.h"
 
-#define SCRCPY_LAVU_HAS_CHLAYOUT //!!!!!!!!!!!!!!@jbb
 
 enum class sc_codec_id : uint32_t {
 	DISABLED = 0,

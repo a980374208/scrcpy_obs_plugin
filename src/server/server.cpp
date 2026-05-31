@@ -570,8 +570,9 @@ int sc_server::run_server(void *data)
 			return -1;
 		}
 	}
-
-	const std::string serial = server->m_serial;
+	if (server->m_serial.empty())
+		server->m_serial = params.req_serial;
+	const std::string &serial = server->m_serial;
 	if (serial.empty()) {
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;

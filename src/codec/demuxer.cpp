@@ -208,12 +208,8 @@ static int run_demuxer(void *data)
 		codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
 	} else {
 		// Hardcoded audio properties
-#ifdef SCRCPY_LAVU_HAS_CHLAYOUT
 		codec_ctx->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
-#else
-		codec_ctx->channel_layout = AV_CH_LAYOUT_STEREO;
-		codec_ctx->channels = 2;
-#endif
+
 		codec_ctx->sample_rate = 48000;
 
 		if (raw_codec_id == SC_CODEC_ID_FLAC) {

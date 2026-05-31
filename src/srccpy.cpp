@@ -54,7 +54,7 @@ static void sc_audio_demuxer_on_ended(sc_demuxer *demuxer, enum sc_demuxer_statu
 	if (status == SC_DEMUXER_STATUS_EOS) {
 		// sc_push_event(SC_EVENT_DEVICE_DISCONNECTED);
 	} else if (status == SC_DEMUXER_STATUS_ERROR ||
-		   (status == SC_DEMUXER_STATUS_DISABLED && options->require_audio)) {
+		   (status == SC_DEMUXER_STATUS_DISABLED && options && options->require_audio)) {
 		// sc_push_event(SC_EVENT_DEMUXER_ERROR);
 	}
 }
@@ -123,7 +123,7 @@ int scrcpy::srccpy_init(obs_data_t *set)
 	params.video_codec = SC_CODEC_H264;
 	params.audio_codec = SC_CODEC_OPUS;
 	params.video_source = SC_VIDEO_SOURCE_DISPLAY;
-	params.audio_source = SC_AUDIO_SOURCE_MIC;
+	params.audio_source = SC_AUDIO_SOURCE_AUTO;
 	params.camera_facing = SC_CAMERA_FACING_FRONT;
 	params.crop = "";
 	params.video_codec_options = "";
@@ -179,152 +179,8 @@ int scrcpy::srccpy_init(obs_data_t *set)
 
 void scrcpy::update(obs_data_t *settings)
 {
-	bool updated = false;
-	if (settings) {
-
-		std::string select_device = obs_data_get_string(settings, "device_list");
-		std::string select_res = obs_data_get_string(settings, "choose_res");
-		sc_video_source choose_src = static_cast<enum sc_video_source>(obs_data_get_int(settings, "choose_src"));
-		std::string choose_capture = obs_data_get_string(settings, "choose_capture");
-		int max_fps = (int)obs_data_get_int(settings, "choose_fps");
-		std::string pair_info = obs_data_get_string(settings, "pair_info");
-		bool wifi_pair = obs_data_get_bool(settings, "wifi_pair");
-		if (select_device.empty()) {
-			return;
-		}
-		if (device_infos.find(select_device) != device_infos.end()) {
-			auto state = device_infos[select_device].device.state;
-			if (state != DEVICE_STATE_DEVICE) {
-				QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
-				if (parent_widget) {
-					const char *warn_text = get_connect_state_error_message(state);
-					QString title = QString::fromUtf8(WARN_TITLE);
-					QString text = QString::fromUtf8(warn_text);
-					QMetaObject::invokeMethod(parent_widget, [parent_widget, title, text]() {
-						QMessageBox::warning(parent_widget, title, text);
-					}, Qt::QueuedConnection);
-				}
-				
-			}
-				
-		}
-		bool serial_changed = (params.req_serial != select_device);
-		bool codec_res_fps_changed = (params.max_fps != std::to_string(max_fps));
-
-		int cx = 0, cy = 0;
-		ResolutionValid(select_res, cx, cy);
-
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			if (params.max_size != cx) {
-				codec_res_fps_changed = true;
-			}
-		} else {
-			if (params.camera_size != select_res) {
-				codec_res_fps_changed = true;
-			}
-		}
-
-		bool src_or_id_changed = (params.video_source != choose_src);
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			int id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-			if (id != params.display_id) {
-				src_or_id_changed = true;
-			}
-		} else {
-			if (params.camera_id != choose_capture) {
-				src_or_id_changed = true;
-			}
-		}
-
-		bool resolution_changed = false;
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			resolution_changed = (params.max_size != cx);
-		} else {
-			resolution_changed = (params.camera_size != select_res);
-		}
-		bool fps_changed = (params.max_fps != std::to_string(max_fps));
-
-		bool config_changed = src_or_id_changed || resolution_changed || fps_changed;
-
-		if (!serial_changed && config_changed &&
-		    server_started && controller_initialized && controller_started) {
-			
-			scrcpy_log(LOG_INFO, "Dynamically switching video source to %s (%s)",
-			     (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? "display" : "camera",
-			     choose_capture.c_str());
-
-			sc_control_msg msg;
-			memset(&msg, 0, sizeof(msg));
-			msg.type = SC_CONTROL_MSG_TYPE_SWITCH_VIDEO_SOURCE;
-			msg.switch_video_source.source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? 0 : 1;
-			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-				msg.switch_video_source.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-				int size = cx > cy ? cx : cy;
-				msg.switch_video_source.max_size = size;
-				msg.switch_video_source.max_fps = (float)max_fps;
-			} else {
-				msg.switch_video_source.camera_id = _strdup(choose_capture.c_str());
-				msg.switch_video_source.camera_width = cx;
-				msg.switch_video_source.camera_height = cy;
-				msg.switch_video_source.camera_fps = max_fps;
-			}
-
-			send_control_msg(msg);
-			sc_control_msg_destroy(&msg);
-
-			params.video_source = choose_src;
-			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-				params.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-				params.max_size = cx > cy ? cx : cy;
-			} else {
-				params.camera_id = choose_capture;
-				params.camera_size = select_res;
-			}
-			params.max_fps = std::to_string(max_fps);
-
-			server.update_params(&params);
-			return;
-		}
-
-		if (serial_changed) {
-			params.req_serial = select_device;
-			updated = true;
-		}
-		if (params.video_source != choose_src) {
-			params.video_source = choose_src;
-			updated = true;
-		}
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			int id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-			if (id != params.display_id) {
-				params.display_id = id;
-				updated = true;
-			}
-			int size = cx > cy ? cx : cy;
-			if (params.max_size != size) {
-				params.max_size = size;
-				updated = true;
-			}
-		} else {
-			if (params.camera_id != choose_capture) {
-				params.camera_id = choose_capture;
-				updated = true;
-			}
-			if (params.camera_size != select_res) {
-				params.camera_size = select_res;
-				updated = true;
-			}
-		}
-		if (params.max_fps != std::to_string(max_fps)) {
-			params.max_fps = std::to_string(max_fps);
-			updated = true;
-		}
-		params.tcpip = wifi_pair;
-		if (params.tcpip) {
-			params.tcpip_dst = pair_info;
-		}
-		
-	}
+	bool updated = should_update(settings);
+	
 	if (!updated && server_started) {
 		return;
 	}
@@ -401,6 +257,31 @@ void scrcpy::update(obs_data_t *settings)
 		video_demuxer_started = true;
 	}
 
+	if (params.audio && this->server.m_audio_socket != SC_SOCKET_NONE) {
+		std::shared_ptr<sc_demuxer_callbacks> audio_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
+		audio_demuxer_cbs->on_ended = sc_audio_demuxer_on_ended;
+		this->audio_demuxer.init("audio", this->server.m_audio_socket, audio_demuxer_cbs, NULL);
+
+		AVCodecID audio_codec_id = AV_CODEC_ID_OPUS;
+		if (params.audio_codec == SC_CODEC_AAC) {
+			audio_codec_id = AV_CODEC_ID_AAC;
+		} else if (params.audio_codec == SC_CODEC_FLAC) {
+			audio_codec_id = AV_CODEC_ID_FLAC;
+		} else if (params.audio_codec == SC_CODEC_RAW) {
+			audio_codec_id = AV_CODEC_ID_PCM_S16LE;
+		}
+
+		this->audio_demuxer.packet_source.clear_sinks();
+		auto audio_sink = std::make_shared<sc_receive_packet_sink>(this, this->source, audio_codec_id);
+		this->audio_demuxer.packet_source.add_sink(audio_sink);
+
+		if (!this->audio_demuxer.start()) {
+			error("Failed to start audio demuxer");
+		} else {
+			audio_demuxer_started = true;
+		}
+	}
+
 	if (params.control) {
 		static const struct sc_controller_callbacks controller_cbs = {
 			&scrcpy::sc_controller_on_ended,
@@ -422,6 +303,183 @@ void scrcpy::update(obs_data_t *settings)
 		controller_started = true;
 		this->usb_debug_enable = true;
 	}
+}
+
+bool scrcpy::should_update(obs_data_t *settings)
+{
+	bool updated = false;
+	if (settings) {
+
+		std::string select_device = obs_data_get_string(settings, "device_list");
+		std::string select_res = obs_data_get_string(settings, "choose_res");
+		sc_video_source choose_src =
+			static_cast<enum sc_video_source>(obs_data_get_int(settings, "choose_src"));
+		std::string choose_capture = obs_data_get_string(settings, "choose_capture");
+		int max_fps = (int)obs_data_get_int(settings, "choose_fps");
+		std::string pair_info = obs_data_get_string(settings, "pair_info");
+		bool wifi_pair = obs_data_get_bool(settings, "wifi_pair");
+		bool audio_enable = obs_data_get_bool(settings, "audio_enable");
+		if (select_device.empty()) {
+			return false;
+		}
+		if (device_infos.find(select_device) != device_infos.end()) {
+			auto state = device_infos[select_device].device.state;
+			if (state != DEVICE_STATE_DEVICE) {
+				QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+				if (parent_widget) {
+					const char *warn_text = get_connect_state_error_message(state);
+					QString title = QString::fromUtf8(WARN_TITLE);
+					QString text = QString::fromUtf8(warn_text);
+					QMetaObject::invokeMethod(
+						parent_widget,
+						[parent_widget, title, text]() {
+							QMessageBox::warning(parent_widget, title, text);
+						},
+						Qt::QueuedConnection);
+				}
+			}
+		}
+		bool serial_changed = (params.req_serial != select_device);
+		bool codec_res_fps_changed = (params.max_fps != std::to_string(max_fps));
+
+		int cx = 0, cy = 0;
+		ResolutionValid(select_res, cx, cy);
+
+		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+			if (params.max_size != cx) {
+				codec_res_fps_changed = true;
+			}
+		} else {
+			if (params.camera_size != select_res) {
+				codec_res_fps_changed = true;
+			}
+		}
+
+		bool src_or_id_changed = (params.video_source != choose_src);
+		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+			int id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
+			if (id != params.display_id) {
+				src_or_id_changed = true;
+			}
+		} else {
+			if (params.camera_id != choose_capture) {
+				src_or_id_changed = true;
+			}
+		}
+
+		bool resolution_changed = false;
+		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+			resolution_changed = (params.max_size != cx);
+		} else {
+			resolution_changed = (params.camera_size != select_res);
+		}
+		bool fps_changed = (params.max_fps != std::to_string(max_fps));
+
+		bool config_changed = src_or_id_changed || resolution_changed || fps_changed;
+		bool is_return = false;
+		if (params.audio != audio_enable) {
+			if (controller_started) {
+				set_stream_paused(PAUSE_AUDIO, !audio_enable);
+				params.audio = audio_enable;
+				is_return = true;
+			} else {
+				params.audio = audio_enable;
+				updated = true;
+			}
+		}
+		if (!serial_changed && config_changed && server_started && controller_initialized &&
+		    controller_started) {
+
+			scrcpy_log(LOG_INFO, "Dynamically switching video source to %s (%s)",
+				   (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? "display" : "camera",
+				   choose_capture.c_str());
+
+			sc_control_msg msg;
+			memset(&msg, 0, sizeof(msg));
+			msg.type = SC_CONTROL_MSG_TYPE_SWITCH_VIDEO_SOURCE;
+			msg.switch_video_source.source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? 0 : 1;
+			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+				msg.switch_video_source.display_id = choose_capture.empty() ? 0
+											    : std::stoi(choose_capture);
+				int size = cx > cy ? cx : cy;
+				msg.switch_video_source.max_size = size;
+				msg.switch_video_source.max_fps = (float)max_fps;
+			} else {
+				msg.switch_video_source.camera_id = _strdup(choose_capture.c_str());
+				msg.switch_video_source.camera_width = cx;
+				msg.switch_video_source.camera_height = cy;
+				msg.switch_video_source.camera_fps = max_fps;
+			}
+
+			send_control_msg(msg);
+			sc_control_msg_destroy(&msg);
+
+			params.video_source = choose_src;
+			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+				params.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
+				params.max_size = cx > cy ? cx : cy;
+			} else {
+				params.camera_id = choose_capture;
+				params.camera_size = select_res;
+			}
+			params.max_fps = std::to_string(max_fps);
+
+			server.update_params(&params);
+			is_return = true;
+		}
+		if (is_return)
+			return false;
+
+		if (serial_changed) {
+			params.req_serial = select_device;
+			updated = true;
+		}
+		if (params.video_source != choose_src) {
+			params.video_source = choose_src;
+			updated = true;
+		}
+		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
+			int id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
+			if (id != params.display_id) {
+				params.display_id = id;
+				updated = true;
+			}
+			int size = cx > cy ? cx : cy;
+			if (params.max_size != size) {
+				params.max_size = size;
+				updated = true;
+			}
+		} else {
+			if (params.camera_id != choose_capture) {
+				params.camera_id = choose_capture;
+				updated = true;
+			}
+			if (params.camera_size != select_res) {
+				params.camera_size = select_res;
+				updated = true;
+			}
+		}
+		if (params.max_fps != std::to_string(max_fps)) {
+			params.max_fps = std::to_string(max_fps);
+			updated = true;
+		}
+		params.tcpip = wifi_pair;
+		if (params.tcpip) {
+			params.tcpip_dst = pair_info;
+		}
+		if (audio_enable) {
+			params.audio = audio_enable;
+			if (params.audio_source == SC_AUDIO_SOURCE_AUTO) {
+				if (params.video_source == SC_VIDEO_SOURCE_DISPLAY) {
+					params.audio_source = SC_AUDIO_SOURCE_OUTPUT;
+				} else {
+					params.audio_source = SC_AUDIO_SOURCE_MIC;
+				}
+			}
+		}
+
+	}
+	return updated;
 }
 
 void scrcpy::get_device_infos(sc_vec_adb_device_infos &device_infos, const std::string &serial)
@@ -850,10 +908,6 @@ void scrcpy::send_key_click(const obs_key_event *event, bool key_up)
 
 bool scrcpy::set_stream_paused(puse_stream_type stream_type, bool pause)
 {
-	if (stream_pause_type == stream_type) {
-		return true;
-	}
-	stream_pause_type = stream_type;
 	sc_control_msg msg;
 	memset(&msg, 0, sizeof(msg));
 	msg.type = SC_CONTROL_MSG_TYPE_PAUSE_RESUME_STREAM;

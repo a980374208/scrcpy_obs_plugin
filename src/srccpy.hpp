@@ -27,9 +27,9 @@ enum scrcpy_exit_code {
 };
 
 enum puse_stream_type {
-	PAUSE_AUDIO = 0,
-	PAUSE_VIDEO,
-	PAUSE_AUDIO_VIDEO,
+	PAUSE_VIDEO = 1,
+	PAUSE_AUDIO = 2,
+	PAUSE_AUDIO_VIDEO = 3,
 	NO_PAUSE = -1
 };
 
@@ -41,6 +41,8 @@ public:
 	int srccpy_init(obs_data_t *set);
 
 	void update(obs_data_t *settings);
+
+	bool should_update(obs_data_t *settings);
 
 	void get_device_infos(sc_vec_adb_device_infos &device_infos, const std::string &serial);
 
