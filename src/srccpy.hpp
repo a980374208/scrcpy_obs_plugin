@@ -69,6 +69,7 @@ public:
 	bool set_stream_paused(puse_stream_type stream_type, bool pause, uint8_t audio_source = 0);
 
 private:
+	void stop_session();
 	uint32_t generate_scid();
 
 	bool video_demuxer_started = false;

@@ -1,4 +1,5 @@
 #include "srccpy.hpp"
+#include "capture_session.h"
 #include "util/rand.h"
 #include "server/server.hpp"
 #include "util/options.h"
@@ -23,7 +24,9 @@ static bool await_for_signal(ServerConnectSignal &signal)
 {
 	std::future<bool> future = signal.promise.get_future();
 
-	bool ok = future.get(); // 阻塞等待
+	if (future.wait_for(std::chrono::seconds(30)) != std::future_status::ready)
+		return false;
+	bool ok = future.get();
 
 	return ok;
 }
@@ -89,22 +92,15 @@ scrcpy::scrcpy(obs_data_t *set, obs_source_t *source_) : source(source_) {
 
 scrcpy::~scrcpy()
 {
-	if (controller_started) {
-		sc_controller_stop(&this->controller);
-		sc_controller_join(&this->controller);
-	}
-	if (controller_initialized) {
-		sc_controller_destroy(&this->controller);
-	}
-	if (server_started) {
-		this->server.server_stop();
-	}
-	if (video_demuxer_started) {
-		this->video_demuxer.join();
-	}
-	if (audio_demuxer_started) {
-		this->audio_demuxer.join();
-	}
+	stop_session();
+}
+
+void scrcpy::stop_session()
+{
+	sc_stop_capture(server, controller, video_demuxer, audio_demuxer);
+	controller_initialized = controller_started = false;
+	video_demuxer_started = audio_demuxer_started = server_started = false;
+	usb_debug_enable = false;
 }
 
 int scrcpy::srccpy_init(obs_data_t *set)
@@ -185,55 +181,20 @@ void scrcpy::update(obs_data_t *settings)
 		return;
 	}
 
+	stop_session();
 	params.scid = generate_scid();
-	server.update_params(&params);
-
-	if (controller_started) {
-		this->usb_debug_enable = false;
-		sc_controller_stop(&this->controller);
-		sc_controller_join(&this->controller);
-		controller_started = false;
-	}
-	if (controller_initialized) {
-		sc_controller_destroy(&this->controller);
-		controller_initialized = false;
-	}
-
-	if (video_demuxer_started) {
-		this->video_demuxer.join();
-		video_demuxer_started = false;
-	}
-	if (audio_demuxer_started) {
-		this->audio_demuxer.join();
-		audio_demuxer_started = false;
-	}
-	if (this->server.m_video_socket != SC_SOCKET_NONE) {
-		net_close(this->server.m_video_socket);
-		this->server.m_video_socket = SC_SOCKET_NONE;
-	}
-	if (this->server.m_audio_socket != SC_SOCKET_NONE) {
-		net_close(this->server.m_audio_socket);
-		this->server.m_audio_socket = SC_SOCKET_NONE;
-	}
-	if (this->server.m_control_socket != SC_SOCKET_NONE) {
-		net_close(this->server.m_control_socket);
-		this->server.m_control_socket = SC_SOCKET_NONE;
-	}
-	if (server_started) {
-		this->server.server_stop();
-		server_started = false;
-	}
+	server.update_params(&params); // The previous worker no longer borrows these parameters.
 
 	server_started = server.server_start();
+	if (!server_started) {
+		error("Failed to start server worker");
+		return; // No worker exists to fulfil the connection promise.
+	}
 	bool connected = await_for_signal(server.m_connect_signal);
 	if (!connected) {
-		error("Server connection failed");
+		error("Server connection failed or timed out");
+		stop_session();
 		return;
-	}
-
-	if (video_demuxer_started) {
-		this->video_demuxer.join();
-		video_demuxer_started = false;
 	}
 
 	std::shared_ptr<sc_demuxer_callbacks> video_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
@@ -290,6 +251,7 @@ void scrcpy::update(obs_data_t *settings)
 		};
 		if (!sc_controller_init(&this->controller, this->server.m_control_socket, &controller_cbs, this)) {
 			error("Failed to initialize controller");
+			stop_session();
 			return;
 		}
 		controller_initialized = true;
@@ -298,6 +260,7 @@ void scrcpy::update(obs_data_t *settings)
 
 		if (!sc_controller_start(&this->controller)) {
 			error("Failed to start controller");
+			stop_session();
 			return;
 		}
 		controller_started = true;

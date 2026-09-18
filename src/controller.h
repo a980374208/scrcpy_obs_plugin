@@ -21,14 +21,14 @@ struct sc_controller_callbacks {
 };
 
 struct sc_controller {
-    sc_socket control_socket;
-    bool stopped;
+    sc_socket control_socket = SC_SOCKET_NONE;
+    std::atomic<bool> stopped{true};
     const struct sc_controller_callbacks *cbs;
     void *cbs_userdata;
 #ifdef __cplusplus
     sc_mutex mutex;
 #endif
-    void *recv_thread;
+    void *recv_thread = nullptr;
 };
 
 #ifdef __cplusplus

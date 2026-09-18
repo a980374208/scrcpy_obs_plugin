@@ -4,14 +4,12 @@
 #include <QRegularExpressionValidator>
 #include <QPushButton>
 #include <QMessageBox>
+#include <QPointer>
 #include <obs-module.h>
-#include <thread>
-#include <QMetaObject>
-#include "srccpy.hpp"
 #include "adb/adb.h"
 
-PairingDialog::PairingDialog(scrcpy *bs, QWidget *parent)
-	: QDialog(parent), bs_instance(bs)
+PairingDialog::PairingDialog(obs_source_t *source, QWidget *parent)
+	: QDialog(parent), source_(obs_source_get_weak_source(source)), task_(this)
 {
 	setWindowTitle(QString::fromUtf8(obs_module_text("PairTitle")));
 
@@ -77,36 +75,32 @@ PairingDialog::PairingDialog(scrcpy *bs, QWidget *parent)
 		btnPair->setEnabled(false);
 		btnPair->setText(QString::fromUtf8(obs_module_text("PairingInProgress")));
 
-		std::string s_pair_addr = pairAddr.toStdString();
-		std::string s_pair_code = pairCode.toStdString();
-		std::string s_connect_addr = connectAddr.toStdString();
-
-		std::thread([this, s_pair_addr, s_pair_code, s_connect_addr, btnPair]() {
-			sc_intr intr;
-			std::string out_err;
-			bool success = sc_adb_pair(intr, s_pair_addr, s_pair_code, out_err);
-
-			bool connect_success = false;
-			if (success && !s_connect_addr.empty()) {
-				connect_success = sc_adb_connect(intr, s_connect_addr, 0);
-			}
-
-			QMetaObject::invokeMethod(this, [this, success, connect_success, out_err, s_connect_addr, btnPair]() {
+		task_.start(QString::fromUtf8(sc_adb_get_executable().c_str()), pairAddr, pairCode, connectAddr,
+			[this, btnPair, connectAddr](bool success, bool connect_success, const QString &out_err) {
+				// QMessageBox runs a nested UI event loop; it may destroy its parent.
+				QPointer<PairingDialog> dialog(this);
 				// 恢复按钮状态
 				btnPair->setEnabled(true);
 				btnPair->setText(QString::fromUtf8(obs_module_text("PairDevice")));
 
 				if (success) {
 					// 配对成功后保存配置到 settings
-					obs_data_t *settings = obs_source_get_settings(bs_instance->get_source());
-					obs_data_set_string(settings, "pair_info", s_connect_addr.c_str());
+					obs_source_t *source = obs_weak_source_get_source(source_);
+					if (!source) { reject(); return; }
+					if (obs_source_removed(source)) {
+						obs_source_release(source);
+						reject(); return;
+					}
+					obs_data_t *settings = obs_source_get_settings(source);
+					obs_data_set_string(settings, "pair_info", connectAddr.toUtf8().constData());
 					obs_data_release(settings);
+					obs_source_release(source);
 
 					if (connect_success) {
 						QString info_msg =
 							QString::fromUtf8(
 								obs_module_text("PairAndConnectSuccess"))
-								.arg(QString::fromStdString(s_connect_addr));
+								.arg(connectAddr);
 						QMessageBox::information(
 							this,
 							QString::fromUtf8(obs_module_text("PairTitle")),
@@ -119,15 +113,32 @@ PairingDialog::PairingDialog(scrcpy *bs, QWidget *parent)
 								obs_module_text("PairSuccessNeedConnect")));
 					}
 					// 仅在成功时关闭对话框
-					accept();
+					if (dialog) dialog->accept();
 				} else {
 					QString error_msg = QString::fromUtf8(obs_module_text("PairFailed"))
-								    .arg(QString::fromStdString(out_err));
+								    .arg(out_err);
 					QMessageBox::critical(this,
 							      QString::fromUtf8(obs_module_text("PairTitle")),
 							      error_msg);
 				}
-			}, Qt::QueuedConnection);
-		}).detach();
+			}, [this] {
+				obs_source_t *source = obs_weak_source_get_source(source_);
+				if (!source) return false;
+				bool alive = !obs_source_removed(source);
+				obs_source_release(source);
+				return alive;
+			});
 	});
+}
+
+PairingDialog::~PairingDialog()
+{
+	task_.cancel();
+	obs_weak_source_release(source_);
+}
+
+void PairingDialog::done(int result)
+{
+	task_.cancel(); // reject(), accept() and window close all retire the current run.
+	QDialog::done(result);
 }

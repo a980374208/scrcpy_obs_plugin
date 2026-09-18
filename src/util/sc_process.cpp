@@ -15,15 +15,15 @@ static int run_observer(void *data)
 	} else {
 		scrcpy_log(LOG_INFO, "Process exited with value 0");
 	}
+	std::function<void()> on_terminated;
 	{
 		std::lock_guard<sc_mutex> lock(observer->mutex);
+		if (observer->listener) on_terminated = observer->listener->on_terminated;
 		observer->terminated = true;
 		sc_cond_signal(observer->cond_terminated);
 	}
 
-	if (observer->listener) {
-		observer->listener->on_terminated();
-	}
+	if (on_terminated) on_terminated();
 
 	return 0;
 }

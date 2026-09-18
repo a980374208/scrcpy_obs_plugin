@@ -113,7 +113,10 @@ public:
 
 	bool server_start();
 
+	// Interrupt and join the worker; retain socket wrappers for borrowers.
 	void server_stop();
+	// Only after all socket borrowers have exited. Idempotent.
+	void close_sockets();
 
 	bool push_server(sc_intr &intr, const std::string &serial);
 

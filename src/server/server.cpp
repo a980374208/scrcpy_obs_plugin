@@ -24,62 +24,7 @@
 
 #include "util/sc_process.h"
 
-class server_log_reader_raii {
-public:
-	server_log_reader_raii(sc_pipe pout) : pout_(pout), thread_started_(false) {
-		if (pout != SC_PROCESS_NONE) {
-			thread_started_ = sc_thread_create(thread_, run_server_log, "scrcpy-log", (void*)(uintptr_t)pout);
-			if (!thread_started_) {
-				error("Failed to create server log reader thread");
-			}
-		}
-	}
-
-	~server_log_reader_raii() {
-		if (pout_ != SC_PROCESS_NONE) {
-			sc_pipe_close(pout_);
-		}
-		if (thread_started_) {
-			sc_thread_join(thread_, NULL);
-		}
-	}
-
-private:
-	static int run_server_log(void *data) {
-		sc_pipe pout = (sc_pipe)(uintptr_t)data;
-		char buf[1024];
-		std::string line_buffer;
-
-		while (true) {
-			ssize_t r = sc_pipe_read(pout, buf, sizeof(buf) - 1);
-			if (r <= 0) {
-				break;
-			}
-			buf[r] = '\0';
-			line_buffer += buf;
-
-			size_t pos;
-			while ((pos = line_buffer.find('\n')) != std::string::npos) {
-				std::string line = line_buffer.substr(0, pos);
-				if (!line.empty() && line.back() == '\r') {
-					line.pop_back();
-				}
-				scrcpy_log(LOG_INFO, "[server] %s", line.c_str());
-				line_buffer.erase(0, pos + 1);
-			}
-		}
-
-		if (!line_buffer.empty()) {
-			scrcpy_log(LOG_INFO, "[server] %s", line_buffer.c_str());
-		}
-
-		return 0;
-	}
-
-	sc_pipe pout_{SC_PROCESS_NONE};
-	sc_thread thread_{};
-	bool thread_started_{false};
-};
+#include "log-reader.h"
 
 static void sc_server_on_terminated(void *userdata)
 {
@@ -215,12 +160,21 @@ void sc_server::server_stop()
 	{
 		std::unique_lock<sc_mutex> lock(this->m_mutex);
 		this->m_stopped = true;
-		sc_cond_signal(this->m_cond_stopped);
+		if (this->m_cond_stopped.cond)
+			sc_cond_signal(this->m_cond_stopped);
 		this->m_intr.intr_interrupt();
 	}
 	
 	sc_thread_join(this->m_thread, NULL);
+	// Publication is complete after join. Interrupt also covers partial startup.
+	if (m_video_socket != SC_SOCKET_NONE) net_interrupt(m_video_socket);
+	if (m_audio_socket != SC_SOCKET_NONE) net_interrupt(m_audio_socket);
+	if (m_control_socket != SC_SOCKET_NONE) net_interrupt(m_control_socket);
+}
 
+void sc_server::close_sockets()
+{
+	// Precondition: server, demuxers and controller (including senders) are joined.
 	if (this->m_video_socket != SC_SOCKET_NONE) {
 		net_close(this->m_video_socket);
 		this->m_video_socket = SC_SOCKET_NONE;
@@ -580,7 +534,13 @@ int sc_server::run_server(void *data)
 	std::vector<std::string> kill_cmd = { sc_adb_get_executable(), "-s", serial, "shell", "pkill", "-f", "com.genymobile.scrcpy.Server" };
 	sc_pid kill_pid = sc_adb_execute(kill_cmd, SC_ADB_SILENT);
 	if (kill_pid != SC_PROCESS_NONE) {
-		sc_process_wait(kill_pid, true);
+		if (server->m_intr.set_process(kill_pid)) {
+			sc_process_wait(kill_pid, false);
+			server->m_intr.set_process(SC_PROCESS_NONE);
+		} else {
+			sc_process_terminate(kill_pid);
+		}
+		sc_process_close(kill_pid);
 		// Wait a short delay to let the system release the camera resource
 		sc_tick delay = sc_tick_now() + SC_TICK_FROM_MS(500);
 		server->sc_server_sleep(delay);

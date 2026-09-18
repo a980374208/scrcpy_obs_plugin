@@ -292,8 +292,11 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 
 bool process_check_success_intr(sc_intr &intr, sc_pid pid, const char *name, unsigned flags)
 {
+	if (pid == SC_PROCESS_NONE) return false;
 	if (!intr.set_process(pid)) {
-		// Already interrupted
+		// Cancellation may win between CreateProcess and registration. Still own pid.
+		sc_process_terminate(pid);
+		sc_process_close(pid);
 		return false;
 	}
 

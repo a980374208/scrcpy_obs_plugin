@@ -27,3 +27,7 @@ Makefile
 *.tmp
 *.swp
 *~
+
+knowledge/*
+tests/
+!knowledge/reviews/

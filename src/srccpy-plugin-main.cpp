@@ -218,7 +218,7 @@ static auto wifi_button_click(obs_properties_t *props, obs_property_t *property,
 	scrcpy *bs = static_cast<scrcpy *>(data);
 	QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
 	
-	PairingDialog dialog(bs, parent_widget);
+	PairingDialog dialog(bs->get_source(), parent_widget);
 	
 	obs_data_t *settings = obs_source_get_settings(bs->get_source());
 	std::string default_connect_addr = obs_data_get_string(settings, "pair_info");
