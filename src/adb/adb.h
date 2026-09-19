@@ -2,6 +2,7 @@
 #include "util/sc_intr.h"
 #include <vector>
 #include "util/sc_process.h"
+#include "util/process_intr.h"
 #include "adb_device.h"
 
 #define SC_ADB_NO_STDOUT (1 << 0)
@@ -36,6 +37,9 @@ bool sc_adb_get_device_info(std::vector<char> &buf, sc_intr &intr, unsigned flag
 
 bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_vec);
 
+sc_process_intr_result sc_adb_list_devices_until(sc_intr &intr, unsigned flags,
+						  sc_vec_adb_devices &out_vec, sc_tick deadline);
+
 //bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_infos &out_vec);
 
 bool sc_adb_select_device(class sc_intr &intr, const struct sc_adb_device_selector &selector, unsigned flags,
@@ -43,7 +47,8 @@ bool sc_adb_select_device(class sc_intr &intr, const struct sc_adb_device_select
 
 bool process_check_success_intr(sc_intr &intr, sc_pid pid, const char *name, unsigned flags);
 
-static bool process_check_success_internal(sc_pid pid, const char *name, bool close, unsigned flags);
+sc_process_intr_result process_check_success_intr_until(sc_intr &intr, sc_pid pid, const char *name,
+							 unsigned flags, sc_tick deadline);
 
 static size_t sc_adb_devices_select(const sc_vec_adb_devices &devices, size_t len,
 				    const struct sc_adb_device_selector &selector, size_t *idx_out);
@@ -56,6 +61,10 @@ static bool sc_adb_device_check_state(struct sc_adb_device &device, sc_vec_adb_d
 
 bool sc_adb_push(sc_intr &intr, const std::string &serial, const std::string &local_path,
 		 const std::string &remote_path, unsigned flags);
+
+sc_process_intr_result sc_adb_push_until(sc_intr &intr, const std::string &serial,
+						 const std::string &local_path, const std::string &remote_path,
+						 unsigned flags, sc_tick deadline);
 
 bool sc_adb_reverse(sc_intr &intr, const std::string &serial, const std::string &device_socket_name,
 		    uint16_t local_port, unsigned flags);

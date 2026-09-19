@@ -30,6 +30,7 @@
 #define TEXT_CHOOSE_FPS           obs_module_text("ChooseFPS")
 #define TEXT_SCRCPY_SOURCE        obs_module_text("AndroidDevice")
 #define EMPTY_DEVICE_TEXT         obs_module_text("EmptyDeviceText")
+#define DEVICE_QUERY_FAILED       obs_module_text("DeviceQueryFailed")
 #define DEVICE_TIP_PAIR_INFO	  obs_module_text("Device.ToolTip.PairInfo")
 #define DEVICE_PAIR_INFO	  obs_module_text("Device.PairInfo")
 #define DEVICE_ENABLE_WIFI	  obs_module_text("Device.EnableWiFi")
@@ -231,29 +232,35 @@ static auto wifi_button_click(obs_properties_t *props, obs_property_t *property,
 	return true;
 }
 
+static void show_device_query_error(const sc_device_query_result &result)
+{
+	QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+	if (!parent_widget)
+		return;
+
+	QString detail = QString::fromUtf8(sc_device_query_status_name(result.status));
+	if (!result.failed_serial.empty()) {
+		detail += QStringLiteral(" (%1)").arg(QString::fromStdString(result.failed_serial));
+	}
+	QString title = QString::fromUtf8(WARN_TITLE);
+	QString text = QString::fromUtf8(DEVICE_QUERY_FAILED).arg(detail);
+	QMetaObject::invokeMethod(parent_widget, [parent_widget, title, text]() {
+		QMessageBox::warning(parent_widget, title, text);
+	}, Qt::QueuedConnection);
+}
+
 static auto device_refresh_btn_click(obs_properties_t *props, obs_property_t *, void *data)
 {
 	scrcpy *bs = static_cast<scrcpy *>(data);
-	bs->device_infos.clear();
-	sc_vec_adb_devices devices;
-	sc_adb_list_devices(bs->server.m_intr, 0, devices);
-	if (bs->controller_started) {
-		for (const auto &device : devices) {
-			if (bs->params.req_serial == device.serial) {
-				bs->request_device_info();
-			} else {
-				bs->get_device_infos(bs->device_infos, device.serial);
-			}
-		}
-	} else {
-		for (const auto &device : devices) {
-			bs->get_device_infos(bs->device_infos, device.serial);
-		}
+	sc_device_query_result query_result = bs->refresh_device_infos();
+	if (query_result.status != sc_device_query_status::success) {
+		show_device_query_error(query_result);
 	}
+	const auto device_infos = bs->get_device_infos();
 	obs_property_t *dev_prop = obs_properties_get(props, "device_list");
 	if (dev_prop) {
 		obs_property_list_clear(dev_prop); // 必须手动清空旧的下拉列表选项
-		for (const auto &device_info : bs->device_infos) {
+		for (const auto &device_info : device_infos) {
 			AddDevice(dev_prop, device_info.second); // 重新填充选项
 		}
 	}
@@ -277,9 +284,12 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 							   OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_set_modified_callback2(dev_prop, on_device_changed, bs);
 	// 获取并填充已连接设备
-	sc_vec_adb_devices devices;
-	sc_adb_list_devices(bs->server.m_intr, 0, devices);
-	if (devices.size() == 0) {
+	sc_device_query_result query_result = bs->refresh_device_infos();
+	const auto device_infos = bs->get_device_infos();
+	if (query_result.status != sc_device_query_status::success) {
+		show_device_query_error(query_result);
+	}
+	if (query_result.status == sc_device_query_status::success && device_infos.empty()) {
 		QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
 		if (parent_widget) {
 			QString title = QString::fromUtf8(WARN_TITLE);
@@ -289,21 +299,7 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 			}, Qt::QueuedConnection);
 		}
 	}
-	bs->device_infos.clear();
-	if (bs->controller_started) {
-		for (const auto &device : devices) {
-			if (bs->params.req_serial == device.serial) {
-				bs->request_device_info();
-			} else {
-				bs->get_device_infos(bs->device_infos, device.serial);
-			}
-		}
-	} else {
-		for (const auto &device : devices) {
-			bs->get_device_infos(bs->device_infos, device.serial);
-		}
-	}
-	for (const auto &device_info : bs->device_infos) {
+	for (const auto &device_info : device_infos) {
 		AddDevice(dev_prop, device_info.second);
 	}
 	// 3. 画面来源切换（Display 或 Camera）

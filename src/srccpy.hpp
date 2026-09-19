@@ -8,6 +8,7 @@
 #include <adb/adb_device.h>
 #include "control_msg.h"
 #include "controller.h"
+#include "device_query.h"
 #include "util/sc_thread.h"
 #include <QPointer>
 
@@ -44,9 +45,9 @@ public:
 
 	bool should_update(obs_data_t *settings);
 
-	void get_device_infos(sc_vec_adb_device_infos &device_infos, const std::string &serial);
+	sc_device_query_result refresh_device_infos(sc_tick timeout = SC_TICK_FROM_SEC(10));
 
-	void update_device_infos(sc_vec_adb_device_infos &device_infos);
+	void update_device_infos(sc_vec_adb_device_infos device_infos);
 
 	void on_interaction_focus(bool focus);
 

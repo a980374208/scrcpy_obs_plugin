@@ -121,18 +121,63 @@ bool sc_adb_get_device_info(std::vector<char> &buf, sc_intr &intr, unsigned flag
 	return true;
 }
 
+static sc_process_intr_result sc_adb_get_device_info_until(std::vector<char> &buf, sc_intr &intr,
+								    unsigned flags, ssize_t &count,
+								    const char *shell, sc_tick deadline)
+{
+	buf.assign(BUFSIZE, 0);
+	count = -1;
+	std::vector<std::string> commands = SC_ADB_COMMAND(shell);
+	sc_pipe pout = SC_PROCESS_NONE;
+	sc_pid pid = sc_adb_execute_p(commands, flags, &pout);
+	if (pid == SC_PROCESS_NONE) {
+		error("Could not execute adb command: %s", shell);
+		return SC_PROCESS_INTR_ERROR;
+	}
+
+	sc_process_intr_result read_result =
+		sc_pipe_read_all_intr_until(intr, pid, pout, buf.data(), BUFSIZE - 1, deadline, count);
+	sc_pipe_close(pout);
+	if (read_result != SC_PROCESS_INTR_SUCCESS) {
+		sc_process_terminate(pid);
+		sc_process_close(pid);
+		return read_result;
+	}
+	if (count < 0 || static_cast<size_t>(count) >= BUFSIZE - 1) {
+		sc_process_terminate(pid);
+		sc_process_close(pid);
+		error("ADB response too large");
+		return SC_PROCESS_INTR_ERROR;
+	}
+
+	sc_process_intr_result wait_result =
+		process_check_success_intr_until(intr, pid, "adb -s get_device_info", flags, deadline);
+	if (wait_result != SC_PROCESS_INTR_SUCCESS) {
+		return wait_result;
+	}
+	return SC_PROCESS_INTR_SUCCESS;
+}
+
 bool sc_adb_list_devices(sc_intr &intr, unsigned flags, sc_vec_adb_devices &out_vec)
 {
-	std::vector<char> buf(BUFSIZE);
-	size_t r; 
-	
-	bool ok = sc_adb_get_device_info(buf,intr, flags, r, "devices -l");
-	if (ok)
-	{
-		ok = sc_adb_parse_devices(std::string_view(buf.data(), r), out_vec);
-	}		
+	return sc_adb_list_devices_until(intr, flags, out_vec, 0) == SC_PROCESS_INTR_SUCCESS;
+}
 
-	return ok;
+sc_process_intr_result sc_adb_list_devices_until(sc_intr &intr, unsigned flags,
+						  sc_vec_adb_devices &out_vec, sc_tick deadline)
+{
+	std::vector<char> buf;
+	ssize_t count;
+	sc_process_intr_result result =
+		sc_adb_get_device_info_until(buf, intr, flags, count, "devices -l", deadline);
+	if (result != SC_PROCESS_INTR_SUCCESS) {
+		return result;
+	}
+
+	if (!sc_adb_parse_devices(std::string_view(buf.data(), static_cast<size_t>(count)), out_vec)) {
+		return SC_PROCESS_INTR_ERROR;
+	}
+	return SC_PROCESS_INTR_SUCCESS;
 }
 
 //bool sc_adb_list_device_infos(sc_intr &intr, unsigned flags, sc_vec_adb_device_infos &out_vec)
@@ -292,47 +337,41 @@ bool sc_adb_select_device(sc_intr &intr, const sc_adb_device_selector &selector,
 
 bool process_check_success_intr(sc_intr &intr, sc_pid pid, const char *name, unsigned flags)
 {
-	if (pid == SC_PROCESS_NONE) return false;
-	if (!intr.set_process(pid)) {
-		// Cancellation may win between CreateProcess and registration. Still own pid.
-		sc_process_terminate(pid);
-		sc_process_close(pid);
-		return false;
-	}
-
-	// Always pass close=false, interrupting would be racy otherwise
-	bool ret = process_check_success_internal(pid, name, false, flags);
-
-	intr.set_process(SC_PROCESS_NONE);
-	// Close separately
-	sc_process_close(pid);
-
-	return ret;
+	return process_check_success_intr_until(intr, pid, name, flags, 0) == SC_PROCESS_INTR_SUCCESS;
 }
 
-static bool process_check_success_internal(sc_pid pid, const char *name, bool close, unsigned flags)
+sc_process_intr_result process_check_success_intr_until(sc_intr &intr, sc_pid pid, const char *name,
+							 unsigned flags, sc_tick deadline)
 {
 	bool log_errors = !(flags & SC_ADB_NO_LOGERR);
-
 	if (pid == SC_PROCESS_NONE) {
 		if (log_errors) {
 			error("Could not execute \"%s\"", name);
 		}
-		return false;
+		return SC_PROCESS_INTR_ERROR;
 	}
-	sc_exit_code exit_code = sc_process_wait(pid, close);
+
+	sc_exit_code exit_code;
+	sc_process_intr_result result = sc_process_wait_intr_until(intr, pid, deadline, exit_code);
+	if (result != SC_PROCESS_INTR_SUCCESS) {
+		// Registration may have lost a race with cancellation, so the caller still owns pid.
+		sc_process_terminate(pid);
+		sc_process_close(pid);
+		return result;
+	}
+
+	sc_process_close(pid);
 	if (exit_code) {
 		if (log_errors) {
 			if (exit_code != SC_EXIT_CODE_NONE) {
-				error("\"%s\" returned with value %" SC_PRIexitcode, name,
-				    exit_code);
+				error("\"%s\" returned with value %" SC_PRIexitcode, name, exit_code);
 			} else {
 				error("\"%s\" exited unexpectedly", name);
 			}
 		}
-		return false;
+		return SC_PROCESS_INTR_ERROR;
 	}
-	return true;
+	return SC_PROCESS_INTR_SUCCESS;
 }
 
 static size_t sc_adb_devices_select(const sc_vec_adb_devices &devices, size_t len, const sc_adb_device_selector &selector,
@@ -433,6 +472,13 @@ static bool sc_adb_device_check_state(sc_adb_device &device, sc_vec_adb_devices 
 bool sc_adb_push(sc_intr &intr, const std::string &serial, const std::string &local_path,
 		 const std::string &remote_path, unsigned flags)
 {
+	return sc_adb_push_until(intr, serial, local_path, remote_path, flags, 0) == SC_PROCESS_INTR_SUCCESS;
+}
+
+sc_process_intr_result sc_adb_push_until(sc_intr &intr, const std::string &serial,
+						 const std::string &local_path, const std::string &remote_path,
+						 unsigned flags, sc_tick deadline)
+{
 	std::string local = local_path;
 	std::string remote = remote_path;
 
@@ -440,12 +486,12 @@ bool sc_adb_push(sc_intr &intr, const std::string &serial, const std::string &lo
 	// Windows 需要对路径加引号
 	local = sc_str_quote(local.c_str());
 	if (local.empty()) {
-		return false;
+		return SC_PROCESS_INTR_ERROR;
 	}
 
 	remote = sc_str_quote(remote.c_str());
 	if (remote.empty()) {
-		return false;
+		return SC_PROCESS_INTR_ERROR;
 	}
 #endif
 
@@ -458,7 +504,7 @@ bool sc_adb_push(sc_intr &intr, const std::string &serial, const std::string &lo
 	sc_pid pid = sc_adb_execute(argv, flags);
 
 	// 检查执行结果
-	return process_check_success_intr(intr, pid, "adb push", flags);
+	return process_check_success_intr_until(intr, pid, "adb push", flags, deadline);
 }
 
 bool sc_adb_reverse(sc_intr &intr, const std::string &serial, const std::string &device_socket_name,

@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <memory>
 #include <string>
+#include <vector>
 #include "util/sc_thread.h"
 #include "util/sc_intr.h"
 #include "adb/adb_tunnel.h"
@@ -121,8 +122,10 @@ public:
 	bool push_server(sc_intr &intr, const std::string &serial);
 
 	static std::string get_server_path();
+	static const char *get_device_server_path();
 
 	sc_pid execute_server(const struct sc_server_params &params, sc_pipe *pout);
+	static sc_pid execute_device_info(const std::string &serial, sc_pipe *pout);
 
 	bool sc_server_connect_to(struct sc_server_info &info);
 
@@ -157,6 +160,7 @@ public:
 
 private:
 	static int run_server(void *);
+	static void append_server_command_prefix(std::vector<std::string> &cmd, const std::string &serial);
 
 	bool sc_server_configure_tcpip_unknown_address(const std::string &serial);
 	bool sc_server_configure_tcpip_known_address(const std::string &addr, bool disconnect);

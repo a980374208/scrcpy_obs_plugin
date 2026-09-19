@@ -240,14 +240,13 @@ std::string sc_server::get_server_path()
 #endif
 }
 
-sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout = nullptr)
+const char *sc_server::get_device_server_path()
 {
-	sc_pid pid = SC_PROCESS_NONE;
+	return SC_DEVICE_SERVER_PATH;
+}
 
-	std::string serial = this->m_serial;
-
-	std::vector<std::string> cmd;
-	cmd.reserve(128);
+void sc_server::append_server_command_prefix(std::vector<std::string> &cmd, const std::string &serial)
+{
 	cmd.emplace_back(sc_adb_get_executable());
 	if (!serial.empty()) {
 		cmd.emplace_back("-s");
@@ -256,6 +255,17 @@ sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout =
 	cmd.emplace_back("shell");
 	cmd.emplace_back("CLASSPATH=" SC_DEVICE_SERVER_PATH);
 	cmd.emplace_back("app_process");
+}
+
+sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout = nullptr)
+{
+	sc_pid pid = SC_PROCESS_NONE;
+
+	std::string serial = this->m_serial;
+
+	std::vector<std::string> cmd;
+	cmd.reserve(128);
+	append_server_command_prefix(cmd, serial);
 
 #ifdef SERVER_DEBUGGER
 	uint16_t sdk_version = sc_adb_get_device_sdk_version(&server->intr, serial);
@@ -317,6 +327,22 @@ sc_pid sc_server::execute_server(const sc_server_params &params, sc_pipe *pout =
 	}
 
 	return pid;
+}
+
+sc_pid sc_server::execute_device_info(const std::string &serial, sc_pipe *pout)
+{
+	if (serial.empty()) {
+		return SC_PROCESS_NONE;
+	}
+
+	std::vector<std::string> cmd;
+	cmd.reserve(16);
+	append_server_command_prefix(cmd, serial);
+	cmd.emplace_back("/");
+	cmd.emplace_back("com.genymobile.scrcpy.Server");
+	cmd.emplace_back(SCRCPY_VERSION);
+	cmd.emplace_back("list_device_infos=true");
+	return sc_adb_execute_p(cmd, 0, pout);
 }
 
 bool sc_server::sc_server_connect_to(sc_server_info &info)
@@ -522,7 +548,7 @@ int sc_server::run_server(void *data)
 			return -1;
 		}
 	}
-	if (server->m_serial.empty())
+	if (!params.tcpip || server->m_serial.empty())
 		server->m_serial = params.req_serial;
 	const std::string &serial = server->m_serial;
 	if (serial.empty()) {

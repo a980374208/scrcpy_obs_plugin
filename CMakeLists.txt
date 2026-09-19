@@ -5,6 +5,7 @@ add_library(OBS::srccpy ALIAS plugin-srccpy)
 find_package(Qt6 REQUIRED Widgets)
 set(CORE_SOURCES
     src/device.cpp
+    src/device_query.cpp
     src/controller.cpp
     src/srccpy.cpp
     src/control_msg.cpp
@@ -40,6 +41,7 @@ set(CORE_SOURCES
 # 头文件列表
 set(CORE_HEADERS
     src/device.h
+    src/device_query.h
     src/controller.h
     src/compat.h
     src/srccpy.hpp
