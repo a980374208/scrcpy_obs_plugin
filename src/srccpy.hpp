@@ -61,8 +61,15 @@ public:
 	void send_mouse_wheel(const obs_mouse_event *event, int x_delta, int y_delta);
 	void send_key_click(const obs_key_event *event, bool key_up);
 	bool set_stream_paused(puse_stream_type stream_type, bool pause, uint8_t audio_source = 0);
+	void set_source_visible(bool visible);
 	uint32_t get_width() const;
 	uint32_t get_height() const;
+#ifdef SC_TESTING
+	bool attach_session_fixture(const std::shared_ptr<sc_capture_session> &session,
+				    const sc_capture_config &config,
+				    bool synchronize_visibility = true);
+	bool session_audio_at_start_fixture(const sc_capture_config &config) const;
+#endif
 
 private:
 	void stop_session(bool failed = false);
@@ -73,6 +80,13 @@ private:
 	bool start_session(const sc_capture_config &config);
 	bool execute_dynamic_update(const sc_capture_config &desired,
 				    const sc_update_plan &plan);
+	bool synchronize_visibility(const std::shared_ptr<sc_capture_session> &session,
+				    bool audio_enabled, sc_audio_source audio_source);
+	bool send_stream_paused(const std::shared_ptr<sc_capture_session> &session,
+				puse_stream_type stream_type, bool pause,
+				uint8_t audio_source);
+	void handle_control_send_failure(const char *operation);
+	sc_server_params make_session_params(const sc_capture_config &config) const;
 	uint32_t generate_scid();
 
 	std::atomic<bool> usb_debug_enable{false};
@@ -83,6 +97,9 @@ private:
 	std::optional<sc_capture_config> pending_config;
 	std::atomic<uint32_t> last_width{0};
 	std::atomic<uint32_t> last_height{0};
+	std::atomic<bool> source_visible{false};
+	std::atomic<bool> user_audio_enabled{false};
+	std::atomic<uint8_t> user_audio_source{SC_AUDIO_SOURCE_OUTPUT};
 	uint64_t next_generation = 0;
 
 public:
@@ -103,3 +120,5 @@ private:
 bool sc_persist_default_device_selection(obs_data_t *settings,
 					 obs_property_t *device_property);
 void register_srccpy();
+void sc_srccpy_source_show(void *data);
+void sc_srccpy_source_hide(void *data);

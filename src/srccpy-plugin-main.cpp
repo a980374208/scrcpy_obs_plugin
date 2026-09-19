@@ -345,6 +345,16 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 
 }
 
+void sc_srccpy_source_show(void *data)
+{
+	static_cast<scrcpy *>(data)->set_source_visible(true);
+}
+
+void sc_srccpy_source_hide(void *data)
+{
+	static_cast<scrcpy *>(data)->set_source_visible(false);
+}
+
 void register_srccpy()
 {
 	struct obs_source_info info{};
@@ -380,12 +390,8 @@ void register_srccpy()
 		return h > 0 ? h : (uint32_t)0;
 	};
 
-	info.show = [](void *data) {
-		static_cast<scrcpy *>(data)->set_stream_paused(PAUSE_AUDIO_VIDEO, false);
-	};
-	info.hide = [](void *data) {
-		static_cast<scrcpy *>(data)->set_stream_paused(PAUSE_AUDIO_VIDEO, true);
-	};
+	info.show = sc_srccpy_source_show;
+	info.hide = sc_srccpy_source_hide;
 	info.activate = [](void *data) {
 		//BrowserSource *bs = static_cast<BrowserSource *>(data);
 		//if (bs->restart)

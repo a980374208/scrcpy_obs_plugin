@@ -165,6 +165,39 @@ std::shared_ptr<sc_capture_session> sc_capture_session::create(
     return session;
 }
 
+#ifdef SC_TESTING
+std::shared_ptr<sc_capture_session> sc_capture_session::create_control_fixture(
+    sc_socket control_socket, uint64_t generation, bool ready)
+{
+    sc_server_params params{};
+    params.control = true;
+    auto session = std::shared_ptr<sc_capture_session>(
+        new sc_capture_session(nullptr, params, generation));
+    if (!session->start_reaper())
+        return nullptr;
+    if (!capture_registry().adopt(session)) {
+        session->request_retire(true);
+        session->join_reaper();
+        return nullptr;
+    }
+    session->server_.m_control_socket = control_socket;
+    if (!sc_controller_init(&session->controller_, control_socket, nullptr, nullptr)) {
+        session->request_retire(true);
+        return nullptr;
+    }
+    session->controller_initialized_.store(true, std::memory_order_release);
+    if (ready) {
+        session->controller_started_.store(true, std::memory_order_release);
+        session->video_started_.store(true, std::memory_order_release);
+    }
+    if (ready && !session->lifecycle_.mark_running(session->lifecycle_generation_)) {
+        session->request_retire(true);
+        return nullptr;
+    }
+    return session;
+}
+#endif
+
 sc_capture_session::~sc_capture_session()
 {
     request_retire(false);

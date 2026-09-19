@@ -49,6 +49,7 @@ static const char *get_connect_state_error_message(device_connect_state state)
 scrcpy::scrcpy(obs_data_t *set, obs_source_t *source_)
 	: source(source_)
 {
+	source_visible.store(source && obs_source_showing(source), std::memory_order_release);
 	srccpy_init(set);
 }
 
@@ -136,6 +137,9 @@ void scrcpy::update(obs_data_t *settings)
 		error("Invalid srccpy source settings: %s", parse_error.c_str());
 		return;
 	}
+	user_audio_enabled.store(desired.audio, std::memory_order_release);
+	user_audio_source.store(static_cast<uint8_t>(desired.audio_source),
+				std::memory_order_release);
 
 	if (capture_owner.retiring()) {
 		apply_capture_config(desired);
@@ -311,7 +315,8 @@ bool scrcpy::start_session(const sc_capture_config &config)
 	pending_config.reset();
 	apply_capture_config(config);
 	params.scid = generate_scid();
-	auto session = sc_capture_session::create(source, params, ++next_generation);
+	sc_server_params session_params = make_session_params(config);
+	auto session = sc_capture_session::create(source, session_params, ++next_generation);
 	if (!session) {
 		error("Could not reserve an asynchronous capture retirement slot");
 		return false;
@@ -327,8 +332,20 @@ bool scrcpy::start_session(const sc_capture_config &config)
 		return false;
 	}
 	usb_debug_enable.store(params.control, std::memory_order_release);
+	if (!synchronize_visibility(session, config.audio, config.audio_source)) {
+		handle_control_send_failure("Synchronizing source visibility after capture startup");
+		return false;
+	}
 	submitted_config = config;
 	return true;
+}
+
+sc_server_params scrcpy::make_session_params(const sc_capture_config &config) const
+{
+	sc_server_params session_params = params;
+	session_params.audio = config.audio &&
+		source_visible.load(std::memory_order_acquire);
+	return session_params;
 }
 
 bool scrcpy::execute_dynamic_update(const sc_capture_config &desired,
@@ -361,10 +378,15 @@ bool scrcpy::execute_dynamic_update(const sc_capture_config &desired,
 			return false;
 	}
 
-	if ((plan.video_changed || plan.audio_changed) &&
-	    !set_stream_paused(PAUSE_AUDIO, !desired.audio,
-			       static_cast<uint8_t>(desired.audio_source)))
-		return false;
+	if (plan.video_changed || plan.audio_changed) {
+		bool visible = source_visible.load(std::memory_order_acquire);
+		puse_stream_type stream_type = !visible && plan.video_changed
+			? PAUSE_AUDIO_VIDEO
+			: PAUSE_AUDIO;
+		if (!send_stream_paused(session, stream_type, !visible || !desired.audio,
+					static_cast<uint8_t>(desired.audio_source)))
+			return false;
+	}
 
 	return session->healthy();
 }
@@ -576,6 +598,28 @@ bool scrcpy::send_control_msg(const sc_control_msg &msg)
 	return session && session->send_control_msg(msg);
 }
 
+#ifdef SC_TESTING
+bool scrcpy::attach_session_fixture(
+	const std::shared_ptr<sc_capture_session> &session,
+	const sc_capture_config &config, bool synchronize)
+{
+	apply_capture_config(config);
+	user_audio_enabled.store(config.audio, std::memory_order_release);
+	user_audio_source.store(static_cast<uint8_t>(config.audio_source),
+				std::memory_order_release);
+	submitted_config = config;
+	if (!capture_owner.attach(session))
+		return false;
+	return !synchronize || synchronize_visibility(session, config.audio,
+						       config.audio_source);
+}
+
+bool scrcpy::session_audio_at_start_fixture(const sc_capture_config &config) const
+{
+	return make_session_params(config).audio;
+}
+#endif
+
 uint32_t scrcpy::get_width() const
 {
 	auto session = capture_owner.active();
@@ -730,15 +774,58 @@ void scrcpy::send_key_click(const obs_key_event *event, bool key_up)
 
 bool scrcpy::set_stream_paused(puse_stream_type stream_type, bool pause, uint8_t audio_source)
 {
+	return send_stream_paused(capture_owner.active(), stream_type, pause, audio_source);
+}
+
+bool scrcpy::send_stream_paused(const std::shared_ptr<sc_capture_session> &session,
+				puse_stream_type stream_type, bool pause,
+				uint8_t audio_source)
+{
+	if (!session || !session->healthy())
+		return false;
 	sc_control_msg msg;
 	memset(&msg, 0, sizeof(msg));
 	msg.type = SC_CONTROL_MSG_TYPE_PAUSE_RESUME_STREAM;
 	msg.pause_resume.stream_type = stream_type;
 	msg.pause_resume.pause = pause;
 	msg.pause_resume.audio_source = audio_source;
-	bool ok = send_control_msg(msg);
+	bool ok = session->send_control_msg(msg);
 	sc_control_msg_destroy(&msg);
 	return ok;
+}
+
+bool scrcpy::synchronize_visibility(
+	const std::shared_ptr<sc_capture_session> &session, bool audio_enabled,
+	sc_audio_source audio_source)
+{
+	bool visible = source_visible.load(std::memory_order_acquire);
+	puse_stream_type stream_type = visible && !audio_enabled
+		? PAUSE_VIDEO
+		: PAUSE_AUDIO_VIDEO;
+	return send_stream_paused(session, stream_type, !visible,
+				  static_cast<uint8_t>(audio_source));
+}
+
+void scrcpy::handle_control_send_failure(const char *operation)
+{
+	error("%s failed; retiring the current session", operation);
+	pending_config.reset();
+	stop_session(true);
+	if (source)
+		obs_source_output_video(source, nullptr);
+}
+
+void scrcpy::set_source_visible(bool visible)
+{
+	source_visible.store(visible, std::memory_order_release);
+	auto session = capture_owner.active();
+	if (!session || !session->healthy())
+		return;
+	bool audio_enabled = user_audio_enabled.load(std::memory_order_acquire);
+	auto audio_source = static_cast<sc_audio_source>(
+		user_audio_source.load(std::memory_order_acquire));
+	if (!synchronize_visibility(session, audio_enabled, audio_source))
+		handle_control_send_failure(visible ? "Showing source" : "Hiding source");
 }
 
 bool scrcpy::request_device_info()

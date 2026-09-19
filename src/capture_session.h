@@ -44,6 +44,10 @@ public:
     static std::shared_ptr<sc_capture_session> create(obs_source_t *source,
                                                       const sc_server_params &params,
                                                       uint64_t generation);
+#ifdef SC_TESTING
+    static std::shared_ptr<sc_capture_session> create_control_fixture(
+        sc_socket control_socket, uint64_t generation, bool ready = true);
+#endif
     ~sc_capture_session();
     sc_capture_session(const sc_capture_session &) = delete;
     sc_capture_session &operator=(const sc_capture_session &) = delete;
