@@ -173,11 +173,20 @@ static auto on_src_changed(void *ptr, obs_properties_t *props, obs_property_t *p
 			struct dstr name_dstr = {0};
 			dstr_printf(&name_dstr, name, id);
 			obs_property_list_add_string(c_c, name_dstr.array, id);
+			dstr_free(&name_dstr);
 		}
 	}
 	on_choose_capture_changed(ptr, props, c_c, settings);
 	return true;
 };
+
+#ifdef SC_TESTING
+bool sc_test_on_src_changed(void *data, obs_properties_t *props,
+			    obs_property_t *property, obs_data_t *settings)
+{
+	return on_src_changed(data, props, property, settings);
+}
+#endif
 
 static auto on_device_changed(void *ptr, obs_properties_t *props, obs_property_t *p, obs_data_t *settings) {
 	scrcpy *sc = static_cast<scrcpy *>(ptr);

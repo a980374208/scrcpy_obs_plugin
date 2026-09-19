@@ -122,3 +122,7 @@ bool sc_persist_default_device_selection(obs_data_t *settings,
 void register_srccpy();
 void sc_srccpy_source_show(void *data);
 void sc_srccpy_source_hide(void *data);
+#ifdef SC_TESTING
+bool sc_test_on_src_changed(void *data, obs_properties_t *props,
+			    obs_property_t *property, obs_data_t *settings);
+#endif
