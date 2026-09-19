@@ -50,10 +50,17 @@ static void srccpy_source_get_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "choose_res", "1920x1080");
 	obs_data_set_default_int(settings, "choose_src", SC_VIDEO_SOURCE_DISPLAY);
-	obs_data_set_default_int(settings, "max_fps", 30);
+	obs_data_set_default_int(settings, SC_FPS_SETTING, SC_DEFAULT_REQUESTED_FPS);
 	obs_data_set_default_bool(settings, "pause_video", false);
 	obs_data_set_default_bool(settings, "pause_audio", false);
 }
+
+#ifdef SC_TESTING
+void sc_test_srccpy_source_get_defaults(obs_data_t *settings)
+{
+	srccpy_source_get_defaults(settings);
+}
+#endif
 
 bool sc_persist_default_device_selection(obs_data_t *settings,
 					 obs_property_t *device_property)
@@ -93,7 +100,7 @@ static auto on_choose_capture_changed(void *ptr, obs_properties_t *props, obs_pr
 {
 	int src = static_cast<int>(obs_data_get_int(settings, "choose_src"));
 	scrcpy *sc = static_cast<scrcpy *>(ptr);
-	obs_property_t *fps_p = obs_properties_get(props, "choose_fps");
+	obs_property_t *fps_p = obs_properties_get(props, SC_FPS_SETTING);
 	obs_property_t *res_p = obs_properties_get(props, "choose_res");
 	if (fps_p)
 		obs_property_list_clear(fps_p);
@@ -190,7 +197,7 @@ bool sc_test_on_src_changed(void *data, obs_properties_t *props,
 
 static auto on_device_changed(void *ptr, obs_properties_t *props, obs_property_t *p, obs_data_t *settings) {
 	scrcpy *sc = static_cast<scrcpy *>(ptr);
-	obs_property_t *fps_p = obs_properties_get(props, "choose_fps");
+	obs_property_t *fps_p = obs_properties_get(props, SC_FPS_SETTING);
 	obs_property_t *r_p = obs_properties_get(props, "choose_res");
 	obs_property_t *c_c = obs_properties_get(props, "choose_capture");
 	if (fps_p)
@@ -341,7 +348,7 @@ static obs_properties_t *scrcpy_source_get_properties(void *data)
 	obs_property_set_modified_callback2(cap_pror, on_choose_capture_changed, bs);
 	obs_properties_add_list(props, "choose_res", TEXT_CHOOSE_RESOLUTION, OBS_COMBO_TYPE_LIST,
 				OBS_COMBO_FORMAT_STRING);
-	obs_properties_add_list(props, "choose_fps", TEXT_CHOOSE_FPS, OBS_COMBO_TYPE_LIST,
+	obs_properties_add_list(props, SC_FPS_SETTING, TEXT_CHOOSE_FPS, OBS_COMBO_TYPE_LIST,
 				OBS_COMBO_FORMAT_INT);
 	auto prop = obs_properties_add_bool(props, "audio_enable", DEVICE_ENABLE_AUDIO);
 	prop = obs_properties_add_bool(props, "wifi_pair", DEVICE_ENABLE_WIFI);

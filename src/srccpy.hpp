@@ -17,6 +17,10 @@
 
 #define WARN_TITLE		  obs_module_text("Warn")
 
+inline constexpr char SC_FPS_SETTING[] = "choose_fps";
+inline constexpr char SC_LEGACY_FPS_SETTING[] = "max_fps";
+inline constexpr int64_t SC_DEFAULT_REQUESTED_FPS = 30;
+
 class QWidget;
 enum scrcpy_exit_code {
 	// Normal program termination
@@ -119,10 +123,12 @@ private:
 
 bool sc_persist_default_device_selection(obs_data_t *settings,
 					 obs_property_t *device_property);
+int64_t sc_normalize_requested_fps(obs_data_t *settings);
 void register_srccpy();
 void sc_srccpy_source_show(void *data);
 void sc_srccpy_source_hide(void *data);
 #ifdef SC_TESTING
+void sc_test_srccpy_source_get_defaults(obs_data_t *settings);
 bool sc_test_on_src_changed(void *data, obs_properties_t *props,
 			    obs_property_t *property, obs_data_t *settings);
 #endif

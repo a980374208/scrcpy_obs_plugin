@@ -54,7 +54,7 @@ struct sc_capture_config {
 	uint32_t width = 0;
 	uint32_t height = 0;
 	uint32_t max_size = 0;
-	uint32_t max_fps = 0;
+	uint32_t requested_fps = 0;
 	bool audio = false;
 	sc_audio_source audio_source = SC_AUDIO_SOURCE_OUTPUT;
 
@@ -81,4 +81,3 @@ sc_update_plan sc_make_update_plan(const sc_capture_config &desired,
 				   bool has_session, bool session_healthy,
 				   bool required_consumers_ready,
 				   bool audio_receiver_ended);
-

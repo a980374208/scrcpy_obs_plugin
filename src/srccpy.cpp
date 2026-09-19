@@ -228,6 +228,25 @@ static bool parse_resolution(const std::string &text, uint32_t &width, uint32_t 
 	       height > 0;
 }
 
+int64_t sc_normalize_requested_fps(obs_data_t *settings)
+{
+	if (!settings)
+		return SC_DEFAULT_REQUESTED_FPS;
+
+	const bool has_current = obs_data_has_user_value(settings, SC_FPS_SETTING);
+	const bool has_legacy = obs_data_has_user_value(settings, SC_LEGACY_FPS_SETTING);
+	int64_t requested_fps = SC_DEFAULT_REQUESTED_FPS;
+	if (has_current)
+		requested_fps = obs_data_get_int(settings, SC_FPS_SETTING);
+	else if (has_legacy)
+		requested_fps = obs_data_get_int(settings, SC_LEGACY_FPS_SETTING);
+
+	if (!has_current)
+		obs_data_set_int(settings, SC_FPS_SETTING, requested_fps);
+	obs_data_erase(settings, SC_LEGACY_FPS_SETTING);
+	return requested_fps;
+}
+
 bool scrcpy::parse_capture_config(obs_data_t *settings, sc_capture_config &config,
 				  std::string &error_message)
 {
@@ -255,12 +274,12 @@ bool scrcpy::parse_capture_config(obs_data_t *settings, sc_capture_config &confi
 	}
 	config.max_size = config.width > config.height ? config.width : config.height;
 
-	int64_t fps = obs_data_get_int(settings, "choose_fps");
+	int64_t fps = sc_normalize_requested_fps(settings);
 	if (fps < 0 || fps > std::numeric_limits<uint16_t>::max()) {
 		error_message = "frame rate is outside the supported range";
 		return false;
 	}
-	config.max_fps = static_cast<uint32_t>(fps);
+	config.requested_fps = static_cast<uint32_t>(fps);
 
 	if (config.video_source == SC_VIDEO_SOURCE_DISPLAY) {
 		if (config.camera_id.empty()) {
@@ -304,9 +323,9 @@ void scrcpy::apply_capture_config(const sc_capture_config &config)
 	params.display_id = config.display_id;
 	params.camera_id = config.camera_id;
 	params.camera_size = config.resolution;
-	params.camera_fps = static_cast<uint16_t>(config.max_fps);
+	params.camera_fps = static_cast<uint16_t>(config.requested_fps);
 	params.max_size = static_cast<uint16_t>(config.max_size);
-	params.max_fps = std::to_string(config.max_fps);
+	params.max_fps = std::to_string(config.requested_fps);
 	params.audio = config.audio;
 }
 
@@ -363,14 +382,14 @@ bool scrcpy::execute_dynamic_update(const sc_capture_config &desired,
 		if (desired.video_source == SC_VIDEO_SOURCE_DISPLAY) {
 			message.switch_video_source.display_id = desired.display_id;
 			message.switch_video_source.max_size = desired.max_size;
-			message.switch_video_source.max_fps = static_cast<float>(desired.max_fps);
+			message.switch_video_source.max_fps = static_cast<float>(desired.requested_fps);
 		} else {
 			message.switch_video_source.camera_id = _strdup(desired.camera_id.c_str());
 			if (!message.switch_video_source.camera_id)
 				return false;
 			message.switch_video_source.camera_width = desired.width;
 			message.switch_video_source.camera_height = desired.height;
-			message.switch_video_source.camera_fps = desired.max_fps;
+			message.switch_video_source.camera_fps = desired.requested_fps;
 		}
 		bool sent = send_control_msg(message);
 		sc_control_msg_destroy(&message);

@@ -89,7 +89,7 @@ static bool sc_same_connection(const sc_capture_config &a, const sc_capture_conf
 
 static bool sc_same_video(const sc_capture_config &a, const sc_capture_config &b)
 {
-	if (a.video_source != b.video_source || a.max_fps != b.max_fps)
+	if (a.video_source != b.video_source || a.requested_fps != b.requested_fps)
 		return false;
 	if (a.video_source == SC_VIDEO_SOURCE_DISPLAY)
 		return a.display_id == b.display_id && a.max_size == b.max_size;
