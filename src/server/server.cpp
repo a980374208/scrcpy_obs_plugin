@@ -4,6 +4,7 @@
 #include <cassert>
 
 #include <memory>
+#include <obs-module.h>
 #include "adb/adb_device.h"
 #include "util/sc_file.h"
 #include <sys/types.h>
@@ -13,7 +14,7 @@
 
 #define SC_SERVER_FILENAME "scrcpy-server"
 
-#define SC_SERVER_PATH_DEFAULT "/server/" SC_SERVER_FILENAME
+#define SC_SERVER_RESOURCE "server/" SC_SERVER_FILENAME
 #define SC_DEVICE_SERVER_PATH "/data/local/tmp/scrcpy-server"
 
 #define SC_ADB_PORT_DEFAULT 5555
@@ -222,24 +223,26 @@ std::string sc_server::get_server_path()
 
 	if (env_path) {
 		// if the envvar is set, use it
-		scrcpy_log(LOG_DEBUG, "Using SCRCPY_SERVER_PATH: %s", env_path);
+		scrcpy_log(LOG_INFO, "Using SCRCPY_SERVER_PATH: %s", env_path);
 		return std::string(env_path);
 	}
 
-#ifndef PORTABLE
-	scrcpy_log(LOG_DEBUG, "Using server: " SC_SERVER_PATH_DEFAULT);
-	std::string path = SC_SERVER_PATH_DEFAULT;
-	path = get_app_relative_path(path).string();
-	return path;
-#else
-	auto local_path = sc_file_get_local_path(SC_SERVER_FILENAME);
-	if (!local_path) {
-		error("Could not get local file path, "
-		     "using " SC_SERVER_FILENAME " from current directory");
-		return std::string(SC_SERVER_FILENAME);
+#ifdef _DEBUG
+	// Debug is built inside OBS and uses its plugin resource deployment.
+	std::unique_ptr<char, decltype(&bfree)> path(obs_module_file(SC_SERVER_RESOURCE), &bfree);
+	if (!path) {
+		const char *data_path = obs_get_module_data_path(obs_current_module());
+		error("Could not find " SC_SERVER_RESOURCE " in OBS plugin data directory: %s",
+		      data_path ? data_path : "(module unavailable)");
+		return {};
 	}
-	scrcpy_log(LOG_DEBUG, "Using server (portable): %s", local_path);
-	return std::string(local_path);
+	scrcpy_log(LOG_INFO, "Using server (OBS plugin data): %s", path.get());
+	return std::string(path.get());
+#else
+	// Release packages retain the original executable-relative server layout.
+	std::string path = get_app_relative_path("/" SC_SERVER_RESOURCE).string();
+	scrcpy_log(LOG_INFO, "Using server (executable-relative): %s", path.c_str());
+	return path;
 #endif
 }
 
