@@ -121,8 +121,13 @@ sc_controller_start(struct sc_controller *controller) {
 }
 
 extern "C" void
-sc_controller_stop(struct sc_controller *controller) {
+sc_controller_request_stop(struct sc_controller *controller) {
     controller->stopped = true;
+}
+
+extern "C" void
+sc_controller_stop(struct sc_controller *controller) {
+    sc_controller_request_stop(controller);
     if (controller->control_socket != SC_SOCKET_NONE) {
         net_interrupt(controller->control_socket);
     }
@@ -146,17 +151,19 @@ sc_controller_join(struct sc_controller *controller) {
 extern "C" bool
 sc_controller_push_msg(struct sc_controller *controller,
                        const struct sc_control_msg *msg) {
+    if (controller->stopped.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<sc_mutex> lock(controller->mutex);
     if (controller->stopped || controller->control_socket == SC_SOCKET_NONE) {
         return false;
     }
     
-    static uint8_t serialized_msg[SC_CONTROL_MSG_MAX_SIZE];
-    size_t length = sc_control_msg_serialize(msg, serialized_msg);
+    size_t length = sc_control_msg_serialize(msg, controller->serialized_msg);
     if (!length) {
         return false;
     }
 
-    ssize_t w = net_send_all(controller->control_socket, serialized_msg, length);
+    ssize_t w = net_send_all(controller->control_socket, controller->serialized_msg, length);
     return (size_t)w == length;
 }

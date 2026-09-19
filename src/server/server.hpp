@@ -113,6 +113,8 @@ public:
 	void update_params(const sc_server_params *params);
 
 	bool server_start();
+	// Interrupt startup/runtime waits without joining the caller's thread.
+	void request_stop();
 
 	// Interrupt and join the worker; retain socket wrappers for borrowers.
 	void server_stop();
@@ -161,6 +163,7 @@ public:
 private:
 	static int run_server(void *);
 	static void append_server_command_prefix(std::vector<std::string> &cmd, const std::string &serial);
+	void close_tunnel();
 
 	bool sc_server_configure_tcpip_unknown_address(const std::string &serial);
 	bool sc_server_configure_tcpip_known_address(const std::string &addr, bool disconnect);

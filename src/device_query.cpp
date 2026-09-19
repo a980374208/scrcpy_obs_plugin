@@ -129,6 +129,10 @@ void sc_device_query::cancel()
 sc_device_query_result sc_device_query::run()
 {
 	sc_device_query_result result;
+	if (!sc_adb_init()) {
+		result.status = sc_device_query_status::list_failed;
+		return result;
+	}
 	if (sc_tick_now() >= deadline_) {
 		cancel();
 		result.status = sc_device_query_status::timed_out;

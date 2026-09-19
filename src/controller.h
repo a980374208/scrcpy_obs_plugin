@@ -28,6 +28,8 @@ struct sc_controller {
 #ifdef __cplusplus
     sc_mutex mutex;
 #endif
+    // Owned by this controller; mutex protects serialization through the last send.
+    uint8_t serialized_msg[SC_CONTROL_MSG_MAX_SIZE];
     void *recv_thread = nullptr;
 };
 
@@ -50,6 +52,9 @@ sc_controller_destroy(struct sc_controller *controller);
 
 bool
 sc_controller_start(struct sc_controller *controller);
+
+void
+sc_controller_request_stop(struct sc_controller *controller);
 
 void
 sc_controller_stop(struct sc_controller *controller);

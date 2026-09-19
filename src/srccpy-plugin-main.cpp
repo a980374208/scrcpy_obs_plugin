@@ -55,16 +55,31 @@ static void srccpy_source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "pause_audio", false);
 }
 
+bool sc_persist_default_device_selection(obs_data_t *settings,
+					 obs_property_t *device_property)
+{
+	const char *selected = obs_data_get_string(settings, "device_list");
+	if (selected && selected[0] != '\0')
+		return false;
+	if (!device_property || obs_property_list_item_count(device_property) == 0)
+		return false;
+
+	const char *first = obs_property_list_item_string(device_property, 0);
+	if (!first || first[0] == '\0')
+		return false;
+	obs_data_set_string(settings, "device_list", first);
+	return true;
+}
+
 static const sc_adb_device_info get_scrcpy_device_info(scrcpy *sc, obs_properties_t *props, obs_data_t *settings)
 {
 	static const sc_adb_device_info empty_info{};
 	const char *device_serial = obs_data_get_string(settings, "device_list");
-	// 如果当前没有选择的设备，则默认选用列表中的第一项
+	// Keep the displayed first item and the value submitted to update() identical.
 	if (!device_serial || device_serial[0] == '\0') {
 		obs_property_t *d_p = obs_properties_get(props, "device_list");
-		if (d_p && obs_property_list_item_count(d_p) > 0) {
-			device_serial = obs_property_list_item_string(d_p, 0);
-		}
+		if (sc_persist_default_device_selection(settings, d_p))
+			device_serial = obs_data_get_string(settings, "device_list");
 	}
 	if (!device_serial || device_serial[0] == '\0') {
 		return empty_info;
@@ -353,12 +368,15 @@ void register_srccpy()
 	info.update = [](void *data, obs_data_t *settings) {
 		static_cast<scrcpy *>(data)->update(settings);
 	};
+	info.video_tick = [](void *data, float) {
+		static_cast<scrcpy *>(data)->video_tick();
+	};
 	info.get_width = [](void *data) {
-		uint32_t w = static_cast<scrcpy *>(data)->width;
+		uint32_t w = static_cast<scrcpy *>(data)->get_width();
 		return w > 0 ? w : (uint32_t)0;
 	};
 	info.get_height = [](void *data) {
-		uint32_t h = static_cast<scrcpy *>(data)->height;
+		uint32_t h = static_cast<scrcpy *>(data)->get_height();
 		return h > 0 ? h : (uint32_t)0;
 	};
 
@@ -401,12 +419,15 @@ void register_srccpy()
 extern struct obs_source_info srccpy_source_info;
 bool obs_module_load(void)
 {
-
+	if (!sc_adb_init()) {
+		blog(LOG_ERROR, "Could not initialize adb executable");
+		return false;
+	}
 	register_srccpy();
 	return true;
 }
 
 void obs_module_unload(void)
 {
-
+	sc_shutdown_capture_sessions();
 }

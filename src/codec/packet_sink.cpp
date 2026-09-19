@@ -1,7 +1,8 @@
 #include "packet_sink.h"
-#include "../srccpy.hpp"
+#include "../capture_session.h"
 #include <iostream>
 #include <cstring>
+#include <utility>
 #include <media-io/video-io.h>
 #include <media-io/audio-io.h>
 #include <util/threading.h>
@@ -61,9 +62,8 @@ const struct sc_packet_sink_ops sc_receive_packet_sink::s_ops = {&sc_receive_pac
 							      &sc_receive_packet_sink::receive_push,
 							      &sc_receive_packet_sink::receive_disable};
 
-sc_receive_packet_sink::sc_receive_packet_sink(scrcpy *sc, obs_source_t *source, AVCodecID codec_id):
-	  m_scrcpy(sc),
-	  m_source(source),
+sc_receive_packet_sink::sc_receive_packet_sink(std::shared_ptr<sc_session_output> output, AVCodecID codec_id):
+	  m_output(std::move(output)),
 	  m_codec_id(codec_id),
 	  m_codec_ctx(nullptr),
 	  m_frame(nullptr),
@@ -124,14 +124,6 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 
 	while (avcodec_receive_frame(file_sink->m_codec_ctx, file_sink->m_frame) == 0) {
 		if (file_sink->m_is_video) {
-			if (file_sink->m_scrcpy) {
-				if (file_sink->m_scrcpy->width != file_sink->m_frame->width ||
-				    file_sink->m_scrcpy->height != file_sink->m_frame->height) {
-					file_sink->m_scrcpy->width = file_sink->m_frame->width;
-					file_sink->m_scrcpy->height = file_sink->m_frame->height;
-				}
-			}
-
 			struct obs_source_frame obs_frame = {0};
 
 			for (size_t i = 0; i < MAX_AV_PLANES; i++) {
@@ -239,7 +231,7 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 				obs_frame.flip = (file_sink->m_frame->linesize[0] < 0);
 				obs_frame.flags = 0;
 
-				obs_source_output_video(file_sink->m_source, &obs_frame);
+				file_sink->m_output->output_video(obs_frame);
 			}
 		} else {
 			struct obs_source_audio obs_audio = {0};
@@ -256,7 +248,7 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 			obs_audio.speakers = convert_ffmpeg_channels_to_obs(channels);
 
 			if (obs_audio.format != AUDIO_FORMAT_UNKNOWN) {
-				obs_source_output_audio(file_sink->m_source, &obs_audio);
+				file_sink->m_output->output_audio(obs_audio);
 			}
 		}
 

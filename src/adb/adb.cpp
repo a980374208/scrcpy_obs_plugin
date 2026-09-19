@@ -6,6 +6,7 @@
 #include "assert.h"
 #include "adb_parser.h"
 #include "util/str_util.h"
+#include <mutex>
 #include <sstream>
 
 #define SC_ADB_COMMAND(...) { sc_adb_get_executable(), __VA_ARGS__ }
@@ -27,36 +28,41 @@ const char *DEVICE_INFO =
 	"\"";
 
 static std::string adb_executable = "";
+static std::mutex adb_executable_mutex;
 
 
 bool sc_adb_init()
 {
-
-	adb_executable = sc_get_env("ADB");
-	if (!adb_executable.empty()) {
-		scrcpy_log(LOG_DEBUG, "Using adb: %s", adb_executable.c_str());
+	std::string executable = sc_get_env("ADB");
+	if (!executable.empty()) {
+		scrcpy_log(LOG_DEBUG, "Using adb: %s", executable.c_str());
+		std::lock_guard<std::mutex> lock(adb_executable_mutex);
+		adb_executable = std::move(executable);
 		return true;
 	}
 
 #if !defined(PORTABLE) || defined(_WIN32)
-	adb_executable = "adb";
+	executable = "adb";
 #else
 	// For portable builds, use the absolute path to the adb executable
 	// in the same directory as scrcpy (except on Windows, where "adb"
 	// is sufficient)
-	adb_executable = sc_file_get_local_path("adb");
-	if (!adb_executable) {
+	executable = sc_file_get_local_path("adb");
+	if (executable.empty()) {
 		// Error already logged
 		return false;
 	}
 
-	scrcpy_log(LOG_DEBUG, "Using adb (portable): %s", adb_executable.c_str());
+	scrcpy_log(LOG_DEBUG, "Using adb (portable): %s", executable.c_str());
 #endif
+	std::lock_guard<std::mutex> lock(adb_executable_mutex);
+	adb_executable = std::move(executable);
 	return true;
 }
 
 std::string sc_adb_get_executable(void)
 {
+	std::lock_guard<std::mutex> lock(adb_executable_mutex);
 	return adb_executable;
 }
 

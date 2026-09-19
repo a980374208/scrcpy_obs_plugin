@@ -144,7 +144,7 @@ bool sc_server::server_start()
 {
 	this->m_stopped = false;
 	this->m_intr.reset();
-	this->m_connect_signal.promise = std::promise<bool>();
+	this->m_connect_signal.reset();
 
 	bool ok = sc_thread_create(this->m_thread, run_server, "scrcpy-server", this);
 	if (!ok) {
@@ -155,7 +155,7 @@ bool sc_server::server_start()
 	return true;
 }
 
-void sc_server::server_stop()
+void sc_server::request_stop()
 {
 	{
 		std::unique_lock<sc_mutex> lock(this->m_mutex);
@@ -164,7 +164,11 @@ void sc_server::server_stop()
 			sc_cond_signal(this->m_cond_stopped);
 		this->m_intr.intr_interrupt();
 	}
-	
+}
+
+void sc_server::server_stop()
+{
+	request_stop();
 	sc_thread_join(this->m_thread, NULL);
 	// Publication is complete after join. Interrupt also covers partial startup.
 	if (m_video_socket != SC_SOCKET_NONE) net_interrupt(m_video_socket);
@@ -366,11 +370,7 @@ bool sc_server::sc_server_connect_to(sc_server_info &info)
 		if (c != SC_SOCKET_NONE) net_close(c);
 	};
 
-	auto close_tunnel = [this, serial]() {
-		if (this->m_tunnel.m_enabled) {
-			this->m_tunnel.sc_adb_tunnel_close(this->m_intr, serial, this->m_device_socket_name);
-		}
-	};
+	auto close_tunnel = [this]() { this->close_tunnel(); };
 
 	if (!this->m_tunnel.m_forward) {
 		// Accept mode: wait for connections from device
@@ -556,22 +556,6 @@ int sc_server::run_server(void *data)
 		return -1;
 	}
 
-	// Kill any existing stale scrcpy-server process on the device
-	std::vector<std::string> kill_cmd = { sc_adb_get_executable(), "-s", serial, "shell", "pkill", "-f", "com.genymobile.scrcpy.Server" };
-	sc_pid kill_pid = sc_adb_execute(kill_cmd, SC_ADB_SILENT);
-	if (kill_pid != SC_PROCESS_NONE) {
-		if (server->m_intr.set_process(kill_pid)) {
-			sc_process_wait(kill_pid, false);
-			server->m_intr.set_process(SC_PROCESS_NONE);
-		} else {
-			sc_process_terminate(kill_pid);
-		}
-		sc_process_close(kill_pid);
-		// Wait a short delay to let the system release the camera resource
-		sc_tick delay = sc_tick_now() + SC_TICK_FROM_MS(500);
-		server->sc_server_sleep(delay);
-	}
-
 	// 4. push server
 	if (!server->push_server(server->m_intr, serial)) {
 		error("push_server failed");
@@ -614,7 +598,7 @@ int sc_server::run_server(void *data)
 	if (!server->sc_server_sleep(tunnel_delay)) {
 		// 如果在延迟期间用户取消了连接或关闭了 OBS，安全退出
 		scrcpy_log(LOG_INFO, "Connection interrupted during tunnel delay");
-		server->m_tunnel.sc_adb_tunnel_close(server->m_intr, serial, server->m_device_socket_name);
+		server->close_tunnel();
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
@@ -624,7 +608,7 @@ int sc_server::run_server(void *data)
 	sc_pid pid = server->execute_server(params, &pout);
 	if (pid == SC_PROCESS_NONE) {
 		error("excute_server failed");
-		server->m_tunnel.sc_adb_tunnel_close(server->m_intr, serial, server->m_device_socket_name);
+		server->close_tunnel();
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
@@ -694,6 +678,20 @@ int sc_server::run_server(void *data)
 		pid = SC_PROCESS_NONE;
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
+	}
+}
+
+void sc_server::close_tunnel()
+{
+	if (!this->m_tunnel.m_enabled) {
+		return;
+	}
+	// The session stop token is already interrupted on cancellation. Cleanup
+	// uses the exact tunnel identity with an independent token so owned mappings
+	// are still removed without touching another session.
+	sc_intr cleanup_intr;
+	if (!this->m_tunnel.sc_adb_tunnel_close(cleanup_intr, this->m_serial, this->m_device_socket_name)) {
+		scrcpy_log(LOG_WARNING, "Could not remove session tunnel");
 	}
 }
 

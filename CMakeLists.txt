@@ -6,6 +6,8 @@ find_package(Qt6 REQUIRED Widgets)
 set(CORE_SOURCES
     src/device.cpp
     src/device_query.cpp
+    src/session_update.cpp
+    src/capture_session.cpp
     src/controller.cpp
     src/srccpy.cpp
     src/control_msg.cpp
@@ -42,6 +44,7 @@ set(CORE_SOURCES
 set(CORE_HEADERS
     src/device.h
     src/device_query.h
+    src/session_update.h
     src/controller.h
     src/compat.h
     src/srccpy.hpp

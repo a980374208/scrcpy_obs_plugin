@@ -5,6 +5,7 @@ extern "C" {
 #include <string>
 #include <fstream>
 #include <cstdint>
+#include <memory>
 
 #include <obs.h>
 
@@ -30,11 +31,11 @@ struct sc_packet_sink_ops {
 	void (*disable)(std::shared_ptr<sc_packet_sink>);
 };
 
-class scrcpy;
+class sc_session_output;
 
 class sc_receive_packet_sink : public sc_packet_sink {
 public:
-	sc_receive_packet_sink(scrcpy *sc, obs_source_t *source, AVCodecID codec_id);
+	sc_receive_packet_sink(std::shared_ptr<sc_session_output> output, AVCodecID codec_id);
 	~sc_receive_packet_sink();
 
 private:
@@ -43,8 +44,7 @@ private:
 	static bool receive_push(std::shared_ptr<sc_packet_sink>, const AVPacket *packet);
 	static void receive_disable(std::shared_ptr<sc_packet_sink>);
 
-	scrcpy *m_scrcpy;
-	obs_source_t *m_source;
+	std::shared_ptr<sc_session_output> m_output;
 	AVCodecID m_codec_id;
 	AVCodecContext *m_codec_ctx;
 	AVFrame *m_frame;

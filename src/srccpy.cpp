@@ -15,52 +15,12 @@
 #include <obs-frontend-api.h>
 #include <qmessagebox.h>
 #include <QMetaObject>
+#include <charconv>
+#include <limits>
 
 #define INTERACTION_WARN_TITLE          obs_module_text("InteractionWarn")
 #define INTERACTION_ERROR_TEXT          obs_module_text("InteractionWarnText")
 //Inertaction failed,Make sure you have enabled USB debugging (Security Settings) and then rebooted your device.
-
-static bool await_for_signal(ServerConnectSignal &signal)
-{
-	std::future<bool> future = signal.promise.get_future();
-
-	if (future.wait_for(std::chrono::seconds(30)) != std::future_status::ready)
-		return false;
-	bool ok = future.get();
-
-	return ok;
-}
-
-static void sc_video_demuxer_on_ended(sc_demuxer *demuxer, enum sc_demuxer_status status, void *userdata)
-{
-	(void)demuxer;
-	(void)userdata;
-
-	// The device may not decide to disable the video
-	assert(status != SC_DEMUXER_STATUS_DISABLED);
-
-	if (status == SC_DEMUXER_STATUS_EOS) {
-		// sc_push_event(SC_EVENT_DEVICE_DISCONNECTED);
-	} else {
-		// sc_push_event(SC_EVENT_DEMUXER_ERROR);
-	}
-}
-
-static void sc_audio_demuxer_on_ended(sc_demuxer *demuxer, enum sc_demuxer_status status, void *userdata)
-{
-	(void)demuxer;
-
-	const struct scrcpy_options *options = (const struct scrcpy_options *)userdata;
-
-	// Contrary to the video demuxer, keep mirroring if only the audio fails
-	// (unless --require-audio is set).
-	if (status == SC_DEMUXER_STATUS_EOS) {
-		// sc_push_event(SC_EVENT_DEVICE_DISCONNECTED);
-	} else if (status == SC_DEMUXER_STATUS_ERROR ||
-		   (status == SC_DEMUXER_STATUS_DISABLED && options && options->require_audio)) {
-		// sc_push_event(SC_EVENT_DEMUXER_ERROR);
-	}
-}
 
 static const char *get_connect_state_error_message(device_connect_state state)
 {
@@ -86,33 +46,28 @@ static const char *get_connect_state_error_message(device_connect_state state)
 	}
 }
 
-scrcpy::scrcpy(obs_data_t *set, obs_source_t *source_) : source(source_) {
+scrcpy::scrcpy(obs_data_t *set, obs_source_t *source_)
+	: source(source_)
+{
 	srccpy_init(set);
 }
 
 scrcpy::~scrcpy()
 {
-	stop_session();
+	capture_owner.destroy();
 }
 
-void scrcpy::stop_session()
+void scrcpy::stop_session(bool failed)
 {
-	sc_stop_capture(server, controller, video_demuxer, audio_demuxer);
-	controller_initialized = controller_started = false;
-	video_demuxer_started = audio_demuxer_started = server_started = false;
-	usb_debug_enable = false;
+	capture_owner.retire_active(failed);
+	usb_debug_enable.store(false, std::memory_order_release);
+	submitted_config.reset();
 }
 
 int scrcpy::srccpy_init(obs_data_t *set)
 {
-	sc_cond_init(device_info_cond);
 	uint32_t scid = generate_scid();
 
-	enum scrcpy_exit_code ret = SCRCPY_EXIT_FAILURE;
-
-	static const struct sc_server_callbacks cbs = {&scrcpy::sc_server_on_connection_failed,
-						       &scrcpy::sc_server_on_connected,
-						       &scrcpy::sc_server_on_disconnected};
 	params.scid = scid;
 	params.req_serial = "";
 	params.log_level = SC_LOG_LEVEL_DEBUG;
@@ -158,310 +113,301 @@ int scrcpy::srccpy_init(obs_data_t *set)
 	params.tcpip = false;
 	params.tcpip_dst = "";
 	params.select_usb = false;
+	params.select_tcpip = false;
 	params.cleanup = true;
 	params.power_on = true;
 	params.kill_adb_on_close = false;
 	params.camera_high_speed = false;
 	params.vd_destroy_content = true;
+	params.vd_system_decorations = true;
 	params.list = 0;
 
-	if (!server.server_init(&cbs, this)) {
-		return SCRCPY_EXIT_FAILURE;
-	}
-	
 	update(set);
 	return 0;
 }
 
 void scrcpy::update(obs_data_t *settings)
 {
-	bool updated = should_update(settings);
-	
-	if (!updated && server_started) {
+	consume_session_events(false);
+
+	sc_capture_config desired;
+	std::string parse_error;
+	if (!parse_capture_config(settings, desired, parse_error)) {
+		error("Invalid srccpy source settings: %s", parse_error.c_str());
 		return;
 	}
 
-	stop_session();
-	params.scid = generate_scid();
-	server.update_params(&params); // The previous worker no longer borrows these parameters.
-	bool has_usb_target = !params.req_serial.empty();
-	bool has_wifi_target = params.tcpip && !params.tcpip_dst.empty();
-	if (!has_usb_target && !has_wifi_target) {
+	if (capture_owner.retiring()) {
+		apply_capture_config(desired);
+		if (desired.has_target())
+			pending_config = desired;
+		else
+			pending_config.reset();
+		return;
+	}
+
+	auto session = capture_owner.active();
+	bool has_session = static_cast<bool>(session);
+	bool session_healthy = session && session->healthy();
+	bool required_ready = session && session->required_consumers_ready();
+	sc_update_plan plan = sc_make_update_plan(
+		desired, submitted_config, has_session, session_healthy, required_ready,
+		session && session->audio_receiver_ended());
+
+	if (plan.action == sc_update_action::no_op) {
+		if (!desired.has_target()) {
+			apply_capture_config(desired);
+			pending_config.reset();
+		}
+		return;
+	}
+
+	if (plan.action == sc_update_action::stop_to_idle) {
+		apply_capture_config(desired);
+		pending_config.reset();
+		stop_session();
 		scrcpy_log(LOG_INFO, "No capture device selected; waiting for source settings");
 		return;
 	}
 
-	server_started = server.server_start();
-	if (!server_started) {
-		error("Failed to start server worker");
-		return; // No worker exists to fulfil the connection promise.
-	}
-	bool connected = await_for_signal(server.m_connect_signal);
-	if (!connected) {
-		error("Server connection failed or timed out");
-		stop_session();
+	if (plan.action == sc_update_action::dynamic_batch) {
+		if (execute_dynamic_update(desired, plan) && session && session->healthy()) {
+			apply_capture_config(desired);
+			submitted_config = desired;
+			return;
+		}
+		error("Dynamic capture update failed; retiring the current session");
+		pending_config.reset();
+		stop_session(true);
+		if (source)
+			obs_source_output_video(source, nullptr);
 		return;
 	}
 
-	std::shared_ptr<sc_demuxer_callbacks> video_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
-	video_demuxer_cbs->on_ended = sc_video_demuxer_on_ended;
-	this->video_demuxer.init("video", this->server.m_video_socket, video_demuxer_cbs, NULL);
-
-	AVCodecID codec_id = AV_CODEC_ID_H264;
-	if (params.video_codec == SC_CODEC_H265) {
-		codec_id = AV_CODEC_ID_HEVC;
-	} else if (params.video_codec == SC_CODEC_AV1) {
-		codec_id = AV_CODEC_ID_AV1;
+	if (has_session) {
+		pending_config = desired;
+		stop_session();
+		return;
 	}
-
-	this->video_demuxer.packet_source.clear_sinks();
-	auto video_sink = std::make_shared<sc_receive_packet_sink>(this, this->source, codec_id);
-	this->video_demuxer.packet_source.add_sink(video_sink);
-
-	if (!this->video_demuxer.start()) {
-		error("Failed to start video demuxer");
-	} else {
-		video_demuxer_started = true;
-	}
-
-	if (/*params.audio && */this->server.m_audio_socket != SC_SOCKET_NONE) {
-		std::shared_ptr<sc_demuxer_callbacks> audio_demuxer_cbs = std::make_shared<sc_demuxer_callbacks>();
-		audio_demuxer_cbs->on_ended = sc_audio_demuxer_on_ended;
-		this->audio_demuxer.init("audio", this->server.m_audio_socket, audio_demuxer_cbs, NULL);
-
-		AVCodecID audio_codec_id = AV_CODEC_ID_OPUS;
-		if (params.audio_codec == SC_CODEC_AAC) {
-			audio_codec_id = AV_CODEC_ID_AAC;
-		} else if (params.audio_codec == SC_CODEC_FLAC) {
-			audio_codec_id = AV_CODEC_ID_FLAC;
-		} else if (params.audio_codec == SC_CODEC_RAW) {
-			audio_codec_id = AV_CODEC_ID_PCM_S16LE;
-		}
-
-		this->audio_demuxer.packet_source.clear_sinks();
-		auto audio_sink = std::make_shared<sc_receive_packet_sink>(this, this->source, audio_codec_id);
-		this->audio_demuxer.packet_source.add_sink(audio_sink);
-
-		if (!this->audio_demuxer.start()) {
-			error("Failed to start audio demuxer");
-		} else {
-			audio_demuxer_started = true;
-		}
-	}
-
-	if (params.control) {
-		static const struct sc_controller_callbacks controller_cbs = {
-			&scrcpy::sc_controller_on_ended,
-			&scrcpy::sc_controller_on_device_info,
-			&scrcpy::sc_controller_on_error_message,
-		};
-		if (!sc_controller_init(&this->controller, this->server.m_control_socket, &controller_cbs, this)) {
-			error("Failed to initialize controller");
-			stop_session();
-			return;
-		}
-		controller_initialized = true;
-
-		sc_controller_configure(&this->controller, NULL, NULL);
-
-		if (!sc_controller_start(&this->controller)) {
-			error("Failed to start controller");
-			stop_session();
-			return;
-		}
-		controller_started = true;
-		this->usb_debug_enable = true;
-	}
+	start_session(desired);
 }
 
-bool scrcpy::should_update(obs_data_t *settings)
+void scrcpy::video_tick()
 {
-	bool updated = false;
-	if (settings) {
+	consume_session_events(true);
+}
 
-		std::string select_device = obs_data_get_string(settings, "device_list");
-		std::string select_res = obs_data_get_string(settings, "choose_res");
-		sc_video_source choose_src =
-			static_cast<enum sc_video_source>(obs_data_get_int(settings, "choose_src"));
-		std::string choose_capture = obs_data_get_string(settings, "choose_capture");
-		int max_fps = (int)obs_data_get_int(settings, "choose_fps");
-		std::string pair_info = obs_data_get_string(settings, "pair_info");
-		bool wifi_pair = obs_data_get_bool(settings, "wifi_pair");
-		bool audio_enable = obs_data_get_bool(settings, "audio_enable");
-		bool valid_wifi_target = wifi_pair && !pair_info.empty();
-		if (select_device.empty() && !valid_wifi_target) {
-			bool target_changed = !params.req_serial.empty() || params.tcpip || !params.tcpip_dst.empty();
-			params.req_serial.clear();
-			params.tcpip = false;
-			params.tcpip_dst.clear();
-			return target_changed;
-		}
-		if (device_infos.find(select_device) != device_infos.end()) {
-			auto state = device_infos[select_device].device.state;
-			if (state != DEVICE_STATE_DEVICE) {
-				QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
-				if (parent_widget) {
-					const char *warn_text = get_connect_state_error_message(state);
-					QString title = QString::fromUtf8(WARN_TITLE);
-					QString text = QString::fromUtf8(warn_text);
-					QMetaObject::invokeMethod(
-						parent_widget,
-						[parent_widget, title, text]() {
-							QMessageBox::warning(parent_widget, title, text);
-						},
-						Qt::QueuedConnection);
-				}
-			}
-		}
-		bool serial_changed = (params.req_serial != select_device);
-		bool codec_res_fps_changed = (params.max_fps != std::to_string(max_fps));
+static bool parse_u32(const std::string &text, uint32_t &value)
+{
+	if (text.empty())
+		return false;
+	uint32_t parsed = 0;
+	auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+	if (result.ec != std::errc() || result.ptr != text.data() + text.size())
+		return false;
+	value = parsed;
+	return true;
+}
 
-		int cx = 0, cy = 0;
-		ResolutionValid(select_res, cx, cy);
-
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			if (params.max_size != cx) {
-				codec_res_fps_changed = true;
-			}
-		} else {
-			if (params.camera_size != select_res) {
-				codec_res_fps_changed = true;
-			}
-		}
-
-		bool src_or_id_changed = (params.video_source != choose_src);
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			int id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-			if (id != params.display_id) {
-				src_or_id_changed = true;
-			}
-		} else {
-			if (params.camera_id != choose_capture) {
-				src_or_id_changed = true;
-			}
-		}
-
-		bool resolution_changed = false;
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			resolution_changed = (params.max_size != cx);
-		} else {
-			resolution_changed = (params.camera_size != select_res);
-		}
-		bool fps_changed = (params.max_fps != std::to_string(max_fps));
-
-		bool config_changed = src_or_id_changed || resolution_changed || fps_changed;
-		bool is_return = false;
-		if (params.audio != audio_enable) {
-			if (controller_started) {
-				set_stream_paused(PAUSE_AUDIO, !audio_enable, (uint8_t)params.audio_source);
-				params.audio = audio_enable;
-				is_return = true;
-			} else {
-				params.audio = audio_enable;
-				updated = true;
-			}
-		}
-		if (!serial_changed && config_changed && server_started && controller_initialized &&
-		    controller_started) {
-
-			scrcpy_log(LOG_INFO, "Dynamically switching video source to %s (%s)",
-				   (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? "display" : "camera",
-				   choose_capture.c_str());
-
-			sc_control_msg msg;
-			memset(&msg, 0, sizeof(msg));
-			msg.type = SC_CONTROL_MSG_TYPE_SWITCH_VIDEO_SOURCE;
-			msg.switch_video_source.source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? 0 : 1;
-			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-				msg.switch_video_source.display_id = choose_capture.empty() ? 0
-											    : std::stoi(choose_capture);
-				int size = cx > cy ? cx : cy;
-				msg.switch_video_source.max_size = size;
-				msg.switch_video_source.max_fps = (float)max_fps;
-			} else {
-				msg.switch_video_source.camera_id = _strdup(choose_capture.c_str());
-				msg.switch_video_source.camera_width = cx;
-				msg.switch_video_source.camera_height = cy;
-				msg.switch_video_source.camera_fps = max_fps;
-			}
-
-			send_control_msg(msg);
-			sc_control_msg_destroy(&msg);
-
-			params.video_source = choose_src;
-			params.audio_source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? SC_AUDIO_SOURCE_OUTPUT : SC_AUDIO_SOURCE_MIC;
-			if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-				params.display_id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-				params.max_size = cx > cy ? cx : cy;
-			} else {
-				params.camera_id = choose_capture;
-				params.camera_size = select_res;
-			}
-			params.max_fps = std::to_string(max_fps);
-
-			if (audio_enable) {
-				set_stream_paused(PAUSE_AUDIO, false, (uint8_t)params.audio_source);
-			}
-
-			server.update_params(&params);
-			is_return = true;
-		}
-		if (is_return)
-			return false;
-
-		if (serial_changed) {
-			params.req_serial = select_device;
-			updated = true;
-		}
-		if (params.video_source != choose_src) {
-			params.video_source = choose_src;
-			params.audio_source = (choose_src == SC_VIDEO_SOURCE_DISPLAY) ? SC_AUDIO_SOURCE_OUTPUT : SC_AUDIO_SOURCE_MIC;
-			updated = true;
-		}
-		if (choose_src == SC_VIDEO_SOURCE_DISPLAY) {
-			int id = choose_capture.empty() ? 0 : std::stoi(choose_capture);
-			if (id != params.display_id) {
-				params.display_id = id;
-				updated = true;
-			}
-			int size = cx > cy ? cx : cy;
-			if (params.max_size != size) {
-				params.max_size = size;
-				updated = true;
-			}
-		} else {
-			if (params.camera_id != choose_capture) {
-				params.camera_id = choose_capture;
-				updated = true;
-			}
-			if (params.camera_size != select_res) {
-				params.camera_size = select_res;
-				updated = true;
-			}
-		}
-		if (params.max_fps != std::to_string(max_fps)) {
-			params.max_fps = std::to_string(max_fps);
-			updated = true;
-		}
-		if (params.tcpip != valid_wifi_target ||
-		    params.tcpip_dst != (valid_wifi_target ? pair_info : std::string())) {
-			params.tcpip = valid_wifi_target;
-			params.tcpip_dst = valid_wifi_target ? pair_info : std::string();
-			updated = true;
-		}
-		if (audio_enable) {
-			params.audio = audio_enable;
-			if (params.audio_source == SC_AUDIO_SOURCE_AUTO) {
-				if (params.video_source == SC_VIDEO_SOURCE_DISPLAY) {
-					params.audio_source = SC_AUDIO_SOURCE_OUTPUT;
-				} else {
-					params.audio_source = SC_AUDIO_SOURCE_MIC;
-				}
-			}
-		}
-
+static bool parse_resolution(const std::string &text, uint32_t &width, uint32_t &height)
+{
+	if (text.empty()) {
+		width = height = 0;
+		return true;
 	}
-	return updated;
+	size_t separator = text.find('x');
+	if (separator == std::string::npos || text.find('x', separator + 1) != std::string::npos)
+		return false;
+	std::string width_text = text.substr(0, separator);
+	std::string height_text = text.substr(separator + 1);
+	return parse_u32(width_text, width) && parse_u32(height_text, height) && width > 0 &&
+	       height > 0;
+}
+
+bool scrcpy::parse_capture_config(obs_data_t *settings, sc_capture_config &config,
+				  std::string &error_message)
+{
+	if (!settings)
+		return true;
+
+	config.serial = obs_data_get_string(settings, "device_list");
+	config.resolution = obs_data_get_string(settings, "choose_res");
+	config.camera_id = obs_data_get_string(settings, "choose_capture");
+	config.video_source = static_cast<sc_video_source>(obs_data_get_int(settings, "choose_src"));
+	if (config.video_source != SC_VIDEO_SOURCE_DISPLAY &&
+	    config.video_source != SC_VIDEO_SOURCE_CAMERA) {
+		error_message = "unsupported video source";
+		return false;
+	}
+
+	if (!parse_resolution(config.resolution, config.width, config.height)) {
+		error_message = "resolution must be empty or WIDTHxHEIGHT";
+		return false;
+	}
+	if (config.width > std::numeric_limits<uint16_t>::max() ||
+	    config.height > std::numeric_limits<uint16_t>::max()) {
+		error_message = "resolution is outside the supported range";
+		return false;
+	}
+	config.max_size = config.width > config.height ? config.width : config.height;
+
+	int64_t fps = obs_data_get_int(settings, "choose_fps");
+	if (fps < 0 || fps > std::numeric_limits<uint16_t>::max()) {
+		error_message = "frame rate is outside the supported range";
+		return false;
+	}
+	config.max_fps = static_cast<uint32_t>(fps);
+
+	if (config.video_source == SC_VIDEO_SOURCE_DISPLAY) {
+		if (config.camera_id.empty()) {
+			config.display_id = 0;
+		} else if (!parse_u32(config.camera_id, config.display_id)) {
+			error_message = "display id must be an unsigned integer";
+			return false;
+		}
+	}
+
+	std::string pair_info = obs_data_get_string(settings, "pair_info");
+	bool wifi_pair = obs_data_get_bool(settings, "wifi_pair");
+	config.tcpip = wifi_pair && !pair_info.empty();
+	config.tcpip_dst = config.tcpip ? pair_info : std::string();
+	config.audio = obs_data_get_bool(settings, "audio_enable");
+	config.audio_source = config.video_source == SC_VIDEO_SOURCE_DISPLAY ? SC_AUDIO_SOURCE_OUTPUT
+									  : SC_AUDIO_SOURCE_MIC;
+
+	auto infos = get_device_infos();
+	auto info = infos.find(config.serial);
+	if (info != infos.end() && info->second.device.state != DEVICE_STATE_DEVICE) {
+		QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
+		if (parent_widget) {
+			QString title = QString::fromUtf8(WARN_TITLE);
+			QString text = QString::fromUtf8(get_connect_state_error_message(info->second.device.state));
+			QMetaObject::invokeMethod(parent_widget, [parent_widget, title, text]() {
+				QMessageBox::warning(parent_widget, title, text);
+			}, Qt::QueuedConnection);
+		}
+	}
+	return true;
+}
+
+void scrcpy::apply_capture_config(const sc_capture_config &config)
+{
+	params.req_serial = config.serial;
+	params.tcpip = config.tcpip;
+	params.tcpip_dst = config.tcpip_dst;
+	params.video_source = config.video_source;
+	params.audio_source = config.audio_source;
+	params.display_id = config.display_id;
+	params.camera_id = config.camera_id;
+	params.camera_size = config.resolution;
+	params.camera_fps = static_cast<uint16_t>(config.max_fps);
+	params.max_size = static_cast<uint16_t>(config.max_size);
+	params.max_fps = std::to_string(config.max_fps);
+	params.audio = config.audio;
+}
+
+bool scrcpy::start_session(const sc_capture_config &config)
+{
+	pending_config.reset();
+	apply_capture_config(config);
+	params.scid = generate_scid();
+	auto session = sc_capture_session::create(source, params, ++next_generation);
+	if (!session) {
+		error("Could not reserve an asynchronous capture retirement slot");
+		return false;
+	}
+	if (!capture_owner.attach(session)) {
+		error("A previous capture session is still retiring");
+		session->request_retire(true);
+		return false;
+	}
+	if (!session->start()) {
+		error("Capture session failed during startup");
+		stop_session(true);
+		return false;
+	}
+	usb_debug_enable.store(params.control, std::memory_order_release);
+	submitted_config = config;
+	return true;
+}
+
+bool scrcpy::execute_dynamic_update(const sc_capture_config &desired,
+				    const sc_update_plan &plan)
+{
+	auto session = capture_owner.active();
+	if (!session || !session->healthy())
+		return false;
+
+	if (plan.video_changed) {
+		sc_control_msg message{};
+		message.type = SC_CONTROL_MSG_TYPE_SWITCH_VIDEO_SOURCE;
+		message.switch_video_source.source =
+			desired.video_source == SC_VIDEO_SOURCE_DISPLAY ? 0 : 1;
+		if (desired.video_source == SC_VIDEO_SOURCE_DISPLAY) {
+			message.switch_video_source.display_id = desired.display_id;
+			message.switch_video_source.max_size = desired.max_size;
+			message.switch_video_source.max_fps = static_cast<float>(desired.max_fps);
+		} else {
+			message.switch_video_source.camera_id = _strdup(desired.camera_id.c_str());
+			if (!message.switch_video_source.camera_id)
+				return false;
+			message.switch_video_source.camera_width = desired.width;
+			message.switch_video_source.camera_height = desired.height;
+			message.switch_video_source.camera_fps = desired.max_fps;
+		}
+		bool sent = send_control_msg(message);
+		sc_control_msg_destroy(&message);
+		if (!sent)
+			return false;
+	}
+
+	if ((plan.video_changed || plan.audio_changed) &&
+	    !set_stream_paused(PAUSE_AUDIO, !desired.audio,
+			       static_cast<uint8_t>(desired.audio_source)))
+		return false;
+
+	return session->healthy();
+}
+
+void scrcpy::consume_session_events(bool start_pending)
+{
+	auto active = capture_owner.active();
+	if (active) {
+		last_width.store(active->width(), std::memory_order_release);
+		last_height.store(active->height(), std::memory_order_release);
+		for (const auto &message : active->take_error_messages())
+			handle_error_message(message);
+		if (active->faulted()) {
+			uint32_t faults = active->faults();
+			scrcpy_log(LOG_WARNING, "Retiring failed capture session (generation=%llu faults=0x%x)",
+				   static_cast<unsigned long long>(active->generation()), faults);
+			pending_config.reset();
+			stop_session(true);
+			if (source)
+				obs_source_output_video(source, nullptr);
+		}
+	}
+
+	auto retiring = capture_owner.retiring();
+	if (retiring) {
+		last_width.store(retiring->width(), std::memory_order_release);
+		last_height.store(retiring->height(), std::memory_order_release);
+		for (const auto &message : retiring->take_error_messages())
+			handle_error_message(message);
+	}
+	bool failed = false;
+	if (!capture_owner.collect_retired(failed))
+		return;
+
+	if (source && (failed || !pending_config || !pending_config->has_target()))
+		obs_source_output_video(source, nullptr);
+	if (start_pending && pending_config && pending_config->has_target()) {
+		auto next = *pending_config;
+		pending_config.reset();
+		start_session(next);
+	} else if (failed) {
+		scrcpy_log(LOG_WARNING, "Capture session retirement completed after failure");
+	}
 }
 
 sc_device_query_result scrcpy::refresh_device_infos(sc_tick timeout)
@@ -486,7 +432,7 @@ void scrcpy::update_device_infos(sc_vec_adb_device_infos device_infos)
 
 void scrcpy::on_interaction_focus(bool focus)
 {
-	if (focus && !this->usb_debug_enable) {
+	if (focus && !this->usb_debug_enable.load(std::memory_order_acquire)) {
 		QWidget *parent_widget = static_cast<QWidget *>(obs_frontend_get_main_window());
 		if (!parent_widget)
 			return;
@@ -518,21 +464,6 @@ void scrcpy::on_interaction_focus(bool focus)
 sc_vec_adb_device_infos scrcpy::get_device_infos() {
 	std::lock_guard<sc_mutex> lock(device_info_mutex);
 	return this->device_infos;
-}
-
-void scrcpy::sc_server_on_connection_failed(sc_server &server, void *userdata)
-{
-	server.m_connect_signal.promise.set_value(false);
-}
-
-void scrcpy::sc_server_on_connected(sc_server &server, void *userdata)
-{
-	server.m_connect_signal.promise.set_value(true);
-}
-
-void scrcpy::sc_server_on_disconnected(sc_server &server, void *userdata)
-{
-	// LOGD("Server disconnected");
 }
 
 uint32_t scrcpy::generate_scid()
@@ -641,10 +572,20 @@ static uint32_t obs_modifiers_to_android_metastate(uint32_t modifiers) {
 
 bool scrcpy::send_control_msg(const sc_control_msg &msg)
 {
-	if (!controller_initialized || !controller_started) {
-		return false;
-	}
-	return sc_controller_push_msg(&this->controller, &msg);
+	auto session = capture_owner.active();
+	return session && session->send_control_msg(msg);
+}
+
+uint32_t scrcpy::get_width() const
+{
+	auto session = capture_owner.active();
+	return session ? session->width() : last_width.load(std::memory_order_acquire);
+}
+
+uint32_t scrcpy::get_height() const
+{
+	auto session = capture_owner.active();
+	return session ? session->height() : last_height.load(std::memory_order_acquire);
 }
 
 void scrcpy::send_mouse_click(const obs_mouse_event *event, int32_t type, bool mouse_up, uint8_t click_count)
@@ -665,6 +606,8 @@ void scrcpy::send_mouse_click(const obs_mouse_event *event, int32_t type, bool m
 
 	msg.inject_touch_event.action = mouse_up ? AMOTION_EVENT_ACTION_UP : AMOTION_EVENT_ACTION_DOWN;
 	msg.inject_touch_event.pointer_id = SC_POINTER_ID_MOUSE;
+	uint32_t width = get_width();
+	uint32_t height = get_height();
 	msg.inject_touch_event.position.screen_size.width = (uint16_t)(width > 0 ? width : 1080);
 	msg.inject_touch_event.position.screen_size.height = (uint16_t)(height > 0 ? height : 1920);
 	msg.inject_touch_event.position.point.x = event->x;
@@ -703,6 +646,8 @@ void scrcpy::send_mouse_move(const obs_mouse_event *event, bool mouse_leave)
 	msg.type = SC_CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT;
 	msg.inject_touch_event.action = AMOTION_EVENT_ACTION_HOVER_MOVE;
 	msg.inject_touch_event.pointer_id = SC_POINTER_ID_MOUSE;
+	uint32_t width = get_width();
+	uint32_t height = get_height();
 	msg.inject_touch_event.position.screen_size.width = (uint16_t)(width > 0 ? width : 1080);
 	msg.inject_touch_event.position.screen_size.height = (uint16_t)(height > 0 ? height : 1920);
 	msg.inject_touch_event.position.point.x = event->x;
@@ -735,6 +680,8 @@ void scrcpy::send_mouse_wheel(const obs_mouse_event *event, int x_delta, int y_d
 	sc_control_msg msg;
 	memset(&msg, 0, sizeof(msg));
 	msg.type = SC_CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT;
+	uint32_t width = get_width();
+	uint32_t height = get_height();
 	msg.inject_scroll_event.position.screen_size.width = (uint16_t)(width > 0 ? width : 1080);
 	msg.inject_scroll_event.position.screen_size.height = (uint16_t)(height > 0 ? height : 1920);
 	msg.inject_scroll_event.position.point.x = event->x;
@@ -794,57 +741,30 @@ bool scrcpy::set_stream_paused(puse_stream_type stream_type, bool pause, uint8_t
 	return ok;
 }
 
-void scrcpy::sc_controller_on_ended(struct sc_controller *controller, bool error, void *userdata)
-{
-	(void)controller;
-	(void)userdata;
-	scrcpy_log(LOG_INFO, "srccpy controller ended (error=%d)", error);
-}
-
 bool scrcpy::request_device_info()
 {
-	device_info_mutex.lock();
-	device_info_received = false;
-
-	sc_control_msg msg;
-	memset(&msg, 0, sizeof(msg));
-	msg.type = SC_CONTROL_MSG_TYPE_GET_DEVICE_INFO;
-	bool ok = send_control_msg(msg);
-	sc_control_msg_destroy(&msg);
-
-	if (ok) {
-		sc_tick deadline = sc_tick_now() + SC_TICK_FROM_MS(1000);
-		while (!device_info_received) {
-			if (!sc_cond_timedwait(device_info_cond, device_info_mutex, deadline)) {
-				// 超时
-				break;
-			}
-		}
-	}
-	device_info_mutex.unlock();
-	return ok && device_info_received;
+	auto session = capture_owner.active();
+	if (!session)
+		return false;
+	std::string json;
+	if (!session->request_device_info(json))
+		return false;
+	parse_and_update_device_info(json, params.req_serial);
+	return true;
 }
 
-void scrcpy::sc_controller_on_device_info(struct sc_controller *controller, const char *json, void *userdata)
-{
-	(void)controller;
-	scrcpy *sc = static_cast<scrcpy *>(userdata);
-	if (sc && json) {
-		sc->parse_and_update_device_info(json);
-	}
-}
-
-void scrcpy::parse_and_update_device_info(const std::string &json_str)
+void scrcpy::parse_and_update_device_info(const std::string &json_str,
+					  const std::string &session_serial)
 {
 	try {
 		auto j = nlohmann::json::parse(json_str);
 		sc_adb_device_info info{};
 
 		if (j.contains("serial") && j["serial"].is_string()) {
-			if (this->params.req_serial.empty()) {
+			if (session_serial.empty()) {
 				info.device.serial = j["serial"].get<std::string>();
 			} else {
-				info.device.serial = this->params.req_serial;
+				info.device.serial = session_serial;
 			}
 			
 		}
@@ -931,21 +851,10 @@ void scrcpy::parse_and_update_device_info(const std::string &json_str)
 		if (!info.device.serial.empty()) {
 			std::lock_guard<sc_mutex> lock(device_info_mutex);
 			this->device_infos[info.device.serial] = std::move(info);
-			device_info_received = true;
-			sc_cond_signal(device_info_cond);
 			scrcpy_log(LOG_INFO, "Updated device info for serial: %s via control socket", info.device.serial.c_str());
 		}
 	} catch (const std::exception &e) {
 		scrcpy_log(LOG_WARNING, "Failed to parse dynamically received device info JSON: %s", e.what());
-	}
-}
-
-void scrcpy::sc_controller_on_error_message(struct sc_controller *controller, const char *error_msg, void *userdata)
-{
-	(void)controller;
-	scrcpy *sc = static_cast<scrcpy *>(userdata);
-	if (sc && error_msg) {
-		sc->handle_error_message(error_msg);
 	}
 }
 
@@ -958,7 +867,7 @@ void scrcpy::handle_error_message(const std::string &error_msg)
 
 		if (error_type == SC_ERROR_TYPE_DEVICE_DISCONNECTED) {
 			if (error_text.find("USB debugging (Security Settings)") != std::string::npos) {
-				this->usb_debug_enable = false;
+				this->usb_debug_enable.store(false, std::memory_order_release);
 			}
 		}
 		error("[scrcpy] Device control/capture error returned from server (type=%d): %s", error_type, error_text.c_str());

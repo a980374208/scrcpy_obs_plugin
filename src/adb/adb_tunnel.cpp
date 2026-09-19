@@ -60,14 +60,15 @@ bool sc_adb_tunnel::enable_tunnel_reverse_any_port(sc_intr &intr, const std::str
 			net_close(server_socket);
 		}
 
-		if (intr.is_interrupted()) {
-			// Stop immediately
-			return false;
+		// The reverse mapping was created by this attempt. Remove it even when
+		// the caller token was interrupted while setting up the local listener.
+		sc_intr cleanup_intr;
+		if (!sc_adb_reverse_remove(cleanup_intr, serial, device_socket_name, SC_ADB_NO_STDOUT)) {
+			scrcpy_log(LOG_WARNING, "Could not remove reverse tunnel on port %" PRIu16, port);
 		}
 
-		// failure, disable tunnel and try another port
-		if (!sc_adb_reverse_remove(intr, serial, device_socket_name, SC_ADB_NO_STDOUT)) {
-			scrcpy_log(LOG_WARNING, "Could not remove reverse tunnel on port %" PRIu16, port);
+		if (intr.is_interrupted()) {
+			return false;
 		}
 
 		// check before incrementing to avoid overflow on port 65535
