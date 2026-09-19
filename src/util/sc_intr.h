@@ -36,4 +36,7 @@ public:
 	sc_socket net_accept_intr(sc_socket server_socket);
 
 	ssize_t net_recv_intr(sc_socket socket, void *buf, size_t len);
+
+	// net_recv_all contract, with the socket registered for the entire read.
+	ssize_t net_recv_all_intr(sc_socket socket, void *buf, size_t len);
 };

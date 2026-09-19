@@ -1,5 +1,6 @@
 #include "net.h"
 #include <assert.h>
+#include <limits.h>
 #include "util/sc_log.h"
 
 #ifdef _WIN32
@@ -291,6 +292,12 @@ sc_socket net_accept(sc_socket server_socket)
 
 ssize_t net_recv(sc_socket socket, void *buf, size_t len)
 {
+	if (len > INT_MAX) {
+		return -1;
+	}
+	if (!len) {
+		return 0;
+	}
 	if (socket == SC_SOCKET_NONE) {
 		return -1;
 	}
@@ -303,14 +310,23 @@ ssize_t net_recv(sc_socket socket, void *buf, size_t len)
 
 ssize_t net_recv_all(sc_socket socket, void *buf, size_t len)
 {
-	if (socket == SC_SOCKET_NONE) {
+	// Bound both the socket API conversion and the signed return value.
+	if (len > INT_MAX) {
 		return -1;
 	}
-	sc_raw_socket raw_sock = unwrap(socket);
-	if (raw_sock == SC_RAW_SOCKET_NONE) {
-		return -1;
+	size_t total = 0;
+	while (total < len) {
+		ssize_t r = net_recv(socket, static_cast<char *>(buf) + total, len - total);
+		if (r < 0) {
+			// Includes interruption; never retry a socket closed by its owner.
+			return -1;
+		}
+		if (!r) {
+			break;
+		}
+		total += static_cast<size_t>(r);
 	}
-	return recv(raw_sock, (char *)buf, (int)len, MSG_WAITALL);
+	return static_cast<ssize_t>(total);
 }
 
 bool net_set_tcp_nodelay(sc_socket socket, bool tcp_nodelay)

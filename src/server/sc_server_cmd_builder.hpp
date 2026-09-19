@@ -44,6 +44,10 @@ static inline bool validate_string(const std::string &s)
 
 struct sc_server_params;
 
+// Session SCIDs are 31-bit non-negative values. Use the same eight lowercase
+// hexadecimal digits for the server argument and Android abstract socket name.
+std::string sc_server_format_scid(uint32_t scid);
+
 class ScServerCmdBuilder {
 public:
 	explicit ScServerCmdBuilder(std::vector<std::string> &out);
@@ -56,9 +60,6 @@ public:
 
 	// 需要校验的字符串参数
 	bool add_validated(std::string_view key, const char *value);
-
-	// hex 参数
-	void add_hex(std::string_view key, uint32_t value);
 
 	// 高层：从 params 批量构建
 	bool build_from_params(const sc_server_params &params, bool tunnel_forward);

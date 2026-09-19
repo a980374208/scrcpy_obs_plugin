@@ -87,6 +87,11 @@ sc_socket net_accept(sc_socket server_socket);
 
 ssize_t net_recv(sc_socket socket, void *buf, size_t len);
 
+// Accumulate until len bytes, EOF, or error. Returns len on success, 0..len-1
+// on EOF, and -1 on error/interrupt (even after partial data). len == 0 succeeds
+// without I/O; len > INT_MAX is rejected before I/O. No error retries.
+// The caller must retain the wrapper until the reader exits; net_interrupt()
+// unblocks the read without freeing it. Only a full result may be parsed.
 ssize_t net_recv_all(sc_socket socket, void *buf, size_t len);
 
 ssize_t net_send_all(sc_socket socket, const void *buf, size_t len);

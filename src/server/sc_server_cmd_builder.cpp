@@ -1,5 +1,7 @@
 #include "sc_server_cmd_builder.hpp"
 #include "server.hpp"
+#include <cinttypes>
+#include <cstdio>
 
 static const char *sc_server_get_codec_name(enum sc_codec codec)
 {
@@ -104,16 +106,16 @@ bool ScServerCmdBuilder::add_validated(std::string_view key, const char *value)
 	return true;
 }
 
-void ScServerCmdBuilder::add_hex(std::string_view key, uint32_t value)
+std::string sc_server_format_scid(uint32_t scid)
 {
-	std::ostringstream ss;
-	ss << key << std::hex << value << std::dec;
-	cmd.emplace_back(ss.str());
+	char value[9];
+	std::snprintf(value, sizeof(value), "%08" PRIx32, scid);
+	return value;
 }
 
 bool ScServerCmdBuilder::build_from_params(const sc_server_params &p, bool tunnel_forward)
 {
-	add_hex("scid=", p.scid);
+	add("scid=", sc_server_format_scid(p.scid));
 	add("log_level=", log_level_to_server_string(p.log_level));
 
 	add_bool("video=", p.video);

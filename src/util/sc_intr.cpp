@@ -94,6 +94,16 @@ ssize_t sc_intr::net_recv_intr(sc_socket socket, void *buf, size_t len)
 	return r;
 }
 
+ssize_t sc_intr::net_recv_all_intr(sc_socket socket, void *buf, size_t len)
+{
+	if (!this->set_socket(socket)) {
+		return -1;
+	}
+	ssize_t r = net_recv_all(socket, buf, len);
+	this->set_socket(SC_SOCKET_NONE);
+	return r;
+}
+
 bool sc_intr::set_process(sc_pid pid)
 {
 	assert(this->socket == SC_SOCKET_NONE);

@@ -6,7 +6,6 @@
 #include <memory>
 #include "adb/adb_device.h"
 #include "util/sc_file.h"
-#include <sstream>
 #include <sys/types.h>
 #include "util/sc_log.h"
 #include "sc_server_cmd_builder.hpp"
@@ -62,8 +61,8 @@ static bool connect_and_read_byte(sc_intr &intr, sc_socket socket, uint32_t tunn
 static bool device_read_info(sc_intr &intr, sc_socket device_socket, struct sc_server_info &info)
 {
 	uint8_t buf[SC_DEVICE_NAME_FIELD_LENGTH];
-	ssize_t r = intr.net_recv_intr(device_socket, buf, sizeof(buf));
-	if (r < SC_DEVICE_NAME_FIELD_LENGTH) {
+	ssize_t r = intr.net_recv_all_intr(device_socket, buf, sizeof(buf));
+	if (r != sizeof(buf) || intr.is_interrupted()) {
 		error("Could not retrieve device information");
 		return false;
 	}
@@ -562,14 +561,8 @@ int sc_server::run_server(void *data)
 		server->m_cbs->on_connection_failed(*server, server->m_cbs_userdata);
 		return -1;
 	}
-	auto scid_hex = [](uint32_t scid) {
-		std::ostringstream oss;
-		oss << std::hex << scid; // 小写 hex，和官方一致
-		return oss.str();
-	};
-
 	// 5. socket name
-	server->m_device_socket_name = SC_SOCKET_NAME_PREFIX + scid_hex(params.scid);
+	server->m_device_socket_name = SC_SOCKET_NAME_PREFIX + sc_server_format_scid(params.scid);
 
 	// 6. 打开 adb tunnel（RAII：失败立即关闭）
 	bool force_adb_forward = params.force_adb_forward;

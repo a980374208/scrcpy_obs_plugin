@@ -11,9 +11,19 @@
 
 struct sc_controller;
 
+// Android DeviceMessageWriter: 256 KiB total, minus type + length.
+#define SC_DEVICE_MSG_CLIPBOARD_MAX_LENGTH ((1u << 18) - 5)
+// Client defense for device/camera capability JSON and diagnostic error JSON.
+// These custom Android messages have no protocol maximum; >1 MiB is rejected.
+#define SC_DEVICE_MSG_JSON_MAX_LENGTH (1u << 20)
+
 struct sc_controller_callbacks {
+    // Once per receiver exit: false for clean EOF/local stop, true for a
+    // truncated/invalid message, read error or allocation failure. Local stop
+    // takes precedence. Session lifecycle independently handles remote EOF.
     void (*on_ended)(struct sc_controller *controller, bool error,
                      void *userdata);
+    // Complete payload, including empty strings; borrowed only during callback.
     void (*on_device_info)(struct sc_controller *controller, const char *json,
                            void *userdata);
     void (*on_error_message)(struct sc_controller *controller, const char *error_msg,
