@@ -27,6 +27,7 @@ public:
     sc_session_output &operator=(const sc_session_output &) = delete;
 
     void close();
+	void reset_video_timing();
     void output_video(const obs_source_frame &frame);
     void output_audio(const obs_source_audio &audio);
     uint32_t width() const;
@@ -38,6 +39,9 @@ private:
     std::atomic<uint32_t> height_{0};
     obs_weak_source_t *weak_source_ = nullptr;
 };
+
+class sc_avsync_trace;
+class sc_session_timing;
 
 class sc_capture_session : public std::enable_shared_from_this<sc_capture_session> {
 public:
@@ -99,6 +103,8 @@ private:
     const uint64_t generation_;
     sc_server_params params_;
     std::shared_ptr<sc_session_output> output_;
+	std::shared_ptr<sc_session_timing> timing_;
+	std::shared_ptr<sc_avsync_trace> avsync_trace_;
     sc_session_lifecycle lifecycle_;
     uint64_t lifecycle_generation_ = 0;
     sc_server server_;

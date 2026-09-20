@@ -1,6 +1,8 @@
 #include "capture_session.h"
 
 #include "codec/packet_sink.h"
+#include "codec/avsync_trace.h"
+#include "codec/session_timing.h"
 #include "util/sc_log.h"
 
 #include <algorithm>
@@ -112,6 +114,18 @@ sc_session_output::~sc_session_output()
 
 void sc_session_output::close() { accepting_.store(false, std::memory_order_release); }
 
+void sc_session_output::reset_video_timing()
+{
+    if (!accepting_.load(std::memory_order_acquire) || !weak_source_)
+        return;
+    obs_source_t *source = obs_weak_source_get_source(weak_source_);
+    if (!source)
+        return;
+    if (accepting_.load(std::memory_order_acquire))
+        obs_source_output_video(source, nullptr);
+    obs_source_release(source);
+}
+
 void sc_session_output::output_video(const obs_source_frame &frame)
 {
     width_.store(frame.width, std::memory_order_release);
@@ -145,7 +159,9 @@ sc_capture_session::sc_capture_session(obs_source_t *source,
                                        const sc_server_params &params,
                                        uint64_t generation)
     : generation_(generation), params_(params),
-      output_(std::make_shared<sc_session_output>(source))
+      output_(std::make_shared<sc_session_output>(source)),
+      timing_(std::make_shared<sc_session_timing>(params.camera_fps)),
+      avsync_trace_(sc_avsync_trace::create_from_environment(generation))
 {
     lifecycle_generation_ = lifecycle_.begin_session();
 }
@@ -249,13 +265,14 @@ bool sc_capture_session::start()
 
     auto video_callbacks = std::make_shared<sc_demuxer_callbacks>();
     video_callbacks->on_ended = &sc_capture_session::on_video_ended;
-    video_demuxer_.init("video", server_.m_video_socket, video_callbacks, this);
+    video_demuxer_.init("video", server_.m_video_socket, video_callbacks, this,
+			avsync_trace_);
     AVCodecID video_codec = params_.video_codec == SC_CODEC_H265 ? AV_CODEC_ID_HEVC
                             : params_.video_codec == SC_CODEC_AV1 ? AV_CODEC_ID_AV1
                                                                   : AV_CODEC_ID_H264;
     video_demuxer_.packet_source.clear_sinks();
     video_demuxer_.packet_source.add_sink(
-        std::make_shared<sc_receive_packet_sink>(output_, video_codec));
+        std::make_shared<sc_receive_packet_sink>(output_, video_codec, timing_, avsync_trace_));
     if (!video_demuxer_.start()) {
         request_retire(true);
         return false;
@@ -265,14 +282,15 @@ bool sc_capture_session::start()
     if (server_.m_audio_socket != SC_SOCKET_NONE) {
         auto audio_callbacks = std::make_shared<sc_demuxer_callbacks>();
         audio_callbacks->on_ended = &sc_capture_session::on_audio_ended;
-        audio_demuxer_.init("audio", server_.m_audio_socket, audio_callbacks, this);
+        audio_demuxer_.init("audio", server_.m_audio_socket, audio_callbacks, this,
+			    avsync_trace_);
         AVCodecID audio_codec = params_.audio_codec == SC_CODEC_AAC ? AV_CODEC_ID_AAC
                               : params_.audio_codec == SC_CODEC_FLAC ? AV_CODEC_ID_FLAC
                               : params_.audio_codec == SC_CODEC_RAW ? AV_CODEC_ID_PCM_S16LE
                                                                     : AV_CODEC_ID_OPUS;
         audio_demuxer_.packet_source.clear_sinks();
         audio_demuxer_.packet_source.add_sink(
-            std::make_shared<sc_receive_packet_sink>(output_, audio_codec));
+            std::make_shared<sc_receive_packet_sink>(output_, audio_codec, timing_, avsync_trace_));
         if (audio_demuxer_.start())
             audio_started_.store(true, std::memory_order_release);
         else

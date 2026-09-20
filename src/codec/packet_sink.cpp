@@ -1,5 +1,7 @@
 #include "packet_sink.h"
+#include "avsync_trace.h"
 #include "../capture_session.h"
+#include <cmath>
 #include <iostream>
 #include <cstring>
 #include <utility>
@@ -62,13 +64,18 @@ const struct sc_packet_sink_ops sc_receive_packet_sink::s_ops = {&sc_receive_pac
 							      &sc_receive_packet_sink::receive_push,
 							      &sc_receive_packet_sink::receive_disable};
 
-sc_receive_packet_sink::sc_receive_packet_sink(std::shared_ptr<sc_session_output> output, AVCodecID codec_id):
+sc_receive_packet_sink::sc_receive_packet_sink(std::shared_ptr<sc_session_output> output,
+					       AVCodecID codec_id,
+					       std::shared_ptr<sc_session_timing> timing,
+					       std::shared_ptr<sc_avsync_trace> trace):
 	  m_output(std::move(output)),
 	  m_codec_id(codec_id),
 	  m_codec_ctx(nullptr),
 	  m_frame(nullptr),
 	  m_is_video(false),
-	  m_packet_count(0)
+	  m_packet_count(0),
+	  m_timing(std::move(timing)),
+	  m_trace(std::move(trace))
 {
 	// Set the ops pointer to our static ops structure
 	this->ops = &s_ops;
@@ -77,6 +84,58 @@ sc_receive_packet_sink::sc_receive_packet_sink(std::shared_ptr<sc_session_output
 		std::cerr << "Failed to allocate AVFrame" << std::endl;
 	}
 }
+
+namespace {
+void audio_levels(const AVFrame *frame, double &peak, double &rms)
+{
+	peak = 0.0;
+	rms = 0.0;
+	const int channels = frame->ch_layout.nb_channels;
+	if (!frame->extended_data || channels <= 0 || frame->nb_samples <= 0)
+		return;
+
+	const auto format = static_cast<AVSampleFormat>(frame->format);
+	const bool planar = av_sample_fmt_is_planar(format) != 0;
+	const AVSampleFormat packed = planar ? av_get_packed_sample_fmt(format) : format;
+	const int planes = planar ? channels : 1;
+	const int values_per_plane = frame->nb_samples * (planar ? 1 : channels);
+	double squares = 0.0;
+	uint64_t count = 0;
+	for (int plane = 0; plane < planes; ++plane) {
+		const uint8_t *data = frame->extended_data[plane];
+		if (!data)
+			continue;
+		for (int i = 0; i < values_per_plane; ++i) {
+			double value = 0.0;
+			switch (packed) {
+			case AV_SAMPLE_FMT_U8:
+				value = (double(data[i]) - 128.0) / 128.0;
+				break;
+			case AV_SAMPLE_FMT_S16:
+				value = double(reinterpret_cast<const int16_t *>(data)[i]) / 32768.0;
+				break;
+			case AV_SAMPLE_FMT_S32:
+				value = double(reinterpret_cast<const int32_t *>(data)[i]) / 2147483648.0;
+				break;
+			case AV_SAMPLE_FMT_FLT:
+				value = reinterpret_cast<const float *>(data)[i];
+				break;
+			case AV_SAMPLE_FMT_DBL:
+				value = reinterpret_cast<const double *>(data)[i];
+				break;
+			default:
+				return;
+			}
+			const double magnitude = std::abs(value);
+			peak = (std::max)(peak, magnitude);
+			squares += value * value;
+			++count;
+		}
+	}
+	if (count)
+		rms = std::sqrt(squares / double(count));
+}
+} // namespace
 
 sc_receive_packet_sink::~sc_receive_packet_sink()
 {
@@ -91,6 +150,10 @@ bool sc_receive_packet_sink::receive_init(std::shared_ptr<sc_packet_sink> sink, 
 
 	file_sink->m_codec_ctx = ctx;
 	file_sink->m_is_video = (ctx->codec_type == AVMEDIA_TYPE_VIDEO);
+	if (file_sink->m_is_video)
+		file_sink->m_timing->reset_video_stream();
+	else
+		file_sink->m_timing->reset_audio_stream();
 
 	std::cout << "Packet sink opened (codec: " << avcodec_get_name(file_sink->m_codec_id) << ")" << std::endl;
 	return true;
@@ -134,12 +197,9 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 			obs_frame.width = file_sink->m_frame->width;
 			obs_frame.height = file_sink->m_frame->height;
 
-			obs_frame.timestamp = os_gettime_ns();
-			/*if (file_sink->m_frame->pts != AV_NOPTS_VALUE) {
-				obs_frame.timestamp = file_sink->m_frame->pts * 1000;
-			} else {
-				obs_frame.timestamp = os_gettime_ns();
-			}*/
+			const auto video_timestamp = file_sink->m_timing->video_to_obs(
+				file_sink->m_frame->pts, os_gettime_ns());
+			obs_frame.timestamp = video_timestamp.timestamp_ns;
 
 			enum video_format format = VIDEO_FORMAT_NONE;
 			switch (file_sink->m_frame->format) {
@@ -231,6 +291,21 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 				obs_frame.flip = (file_sink->m_frame->linesize[0] < 0);
 				obs_frame.flags = 0;
 
+				if (file_sink->m_trace) {
+					int center_luma = -1;
+					if (file_sink->m_frame->data[0] && file_sink->m_frame->width > 0 &&
+					    file_sink->m_frame->height > 0) {
+						const int y = file_sink->m_frame->height / 2;
+						const int x = file_sink->m_frame->width / 2;
+						center_luma = file_sink->m_frame->data[0][
+							y * file_sink->m_frame->linesize[0] + x];
+					}
+					file_sink->m_trace->decoded_submit(
+						"video", file_sink->m_frame->pts, os_gettime_ns(),
+						obs_frame.timestamp, 1, 0, 0.0, 0.0, center_luma);
+				}
+				if (video_timestamp.reset_obs_timeline)
+					file_sink->m_output->reset_video_timing();
 				file_sink->m_output->output_video(obs_frame);
 			}
 		} else {
@@ -241,13 +316,26 @@ bool sc_receive_packet_sink::receive_push(std::shared_ptr<sc_packet_sink> sink, 
 			obs_audio.frames = file_sink->m_frame->nb_samples;
 			obs_audio.format = convert_ffmpeg_sample_format_to_obs((enum AVSampleFormat)file_sink->m_frame->format);
 			obs_audio.samples_per_sec = file_sink->m_frame->sample_rate;
-			obs_audio.timestamp = os_gettime_ns();
+			const uint64_t audio_arrival_ns = os_gettime_ns();
+			obs_audio.timestamp = file_sink->m_timing->audio_to_obs(
+				file_sink->m_frame->pts, audio_arrival_ns,
+				file_sink->m_frame->nb_samples,
+				file_sink->m_frame->sample_rate);
 
 			int channels = file_sink->m_frame->ch_layout.nb_channels;
 
 			obs_audio.speakers = convert_ffmpeg_channels_to_obs(channels);
 
 			if (obs_audio.format != AUDIO_FORMAT_UNKNOWN) {
+				if (file_sink->m_trace) {
+					double peak = 0.0;
+					double rms = 0.0;
+					audio_levels(file_sink->m_frame, peak, rms);
+					file_sink->m_trace->decoded_submit(
+						"audio", file_sink->m_frame->pts, os_gettime_ns(),
+						obs_audio.timestamp, obs_audio.frames,
+						obs_audio.samples_per_sec, peak, rms, -1);
+				}
 				file_sink->m_output->output_audio(obs_audio);
 			}
 		}

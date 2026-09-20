@@ -8,6 +8,9 @@ extern "C" {
 #include <memory>
 
 #include <obs.h>
+#include "session_timing.h"
+
+class sc_avsync_trace;
 
 struct sc_packet_sink_ops;
 struct sc_packet_sink {
@@ -35,7 +38,9 @@ class sc_session_output;
 
 class sc_receive_packet_sink : public sc_packet_sink {
 public:
-	sc_receive_packet_sink(std::shared_ptr<sc_session_output> output, AVCodecID codec_id);
+	sc_receive_packet_sink(std::shared_ptr<sc_session_output> output, AVCodecID codec_id,
+			       std::shared_ptr<sc_session_timing> timing,
+			       std::shared_ptr<sc_avsync_trace> trace = nullptr);
 	~sc_receive_packet_sink();
 
 private:
@@ -50,6 +55,8 @@ private:
 	AVFrame *m_frame;
 	bool m_is_video;
 	uint32_t m_packet_count;
+	std::shared_ptr<sc_session_timing> m_timing;
+	std::shared_ptr<sc_avsync_trace> m_trace;
 
 	static const struct sc_packet_sink_ops s_ops;
 };

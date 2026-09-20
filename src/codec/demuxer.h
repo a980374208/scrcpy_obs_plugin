@@ -6,6 +6,7 @@ extern "C" {
 #include "util/net.h"
 #include "codec/packet_source.h"
 
+class sc_avsync_trace;
 
 enum class sc_codec_id : uint32_t {
 	DISABLED = 0,
@@ -36,7 +37,7 @@ public:
 	~sc_demuxer();
 
 	void init(const char *name, sc_socket socket, std::shared_ptr<sc_demuxer_callbacks> callbacks,
-		  void *cbs_userdata);
+		  void *cbs_userdata, std::shared_ptr<sc_avsync_trace> trace = nullptr);
 
 	bool start();
 
@@ -51,4 +52,5 @@ public:
 	std::shared_ptr<sc_demuxer_callbacks> cbs;
 	sc_packet_source packet_source; // packet source trait
 	void *cbs_userdata;
+	std::shared_ptr<sc_avsync_trace> trace;
 };

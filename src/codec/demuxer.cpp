@@ -1,4 +1,5 @@
 #include "demuxer.h"
+#include "avsync_trace.h"
 #include "packet_sink.h"
 #include <cassert>
 #include <cstring>
@@ -6,6 +7,7 @@
 #include "util/binary.h"
 #include "packet_merge.h"
 #include "util/sc_log.h"
+#include <util/platform.h>
 
 #define SC_PACKET_HEADER_SIZE 12
 
@@ -128,6 +130,12 @@ static bool sc_demuxer_recv_packet(sc_demuxer *demuxer, AVPacket *packet)
 	}
 
 	packet->dts = packet->pts;
+	if (demuxer->trace) {
+		demuxer->trace->packet_received(
+			demuxer->m_name, packet->pts, os_gettime_ns(), packet->size,
+			(packet->flags & AV_PKT_FLAG_KEY) != 0,
+			packet->pts == AV_NOPTS_VALUE);
+	}
 	return true;
 }
 
@@ -193,6 +201,8 @@ static int run_demuxer(void *data)
 	}
 
 	codec_ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+	// Streamer transmits MediaCodec presentationTimeUs in every media header.
+	codec_ctx->pkt_timebase = AVRational{1, 1000000};
 
 	if (codec->type == AVMEDIA_TYPE_VIDEO) {
 		uint32_t width;
@@ -306,7 +316,7 @@ sc_demuxer::sc_demuxer() {}
 sc_demuxer::~sc_demuxer() {}
 
 void sc_demuxer::init(const char *name, sc_socket socket, std::shared_ptr<sc_demuxer_callbacks> callbacks,
-		      void *cbs_userdata)
+		      void *cbs_userdata, std::shared_ptr<sc_avsync_trace> trace)
 {
 	assert(callbacks != nullptr);
 	this->m_name = name; // statically allocated
@@ -314,6 +324,7 @@ void sc_demuxer::init(const char *name, sc_socket socket, std::shared_ptr<sc_dem
 
 	this->cbs = callbacks;
 	this->cbs_userdata = cbs_userdata;
+	this->trace = std::move(trace);
 	this->packet_source.clear_sinks();
 }
 

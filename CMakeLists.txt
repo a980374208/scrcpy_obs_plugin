@@ -32,6 +32,7 @@ set(CORE_SOURCES
     src/util/env.cpp
     src/event/sc_event.cpp
     src/codec/demuxer.cpp
+    src/codec/avsync_trace.cpp
     src/codec/packet_source.cpp
     src/codec/packet_sink.cpp
     src/codec/packet_merge.cpp
@@ -71,6 +72,8 @@ set(CORE_HEADERS
     src/util/process_intr.h
     src/event/sc_event.h
     src/codec/demuxer.h
+    src/codec/avsync_trace.h
+    src/codec/session_timing.h
     src/codec/packet_source.h
     src/codec/packet_sink.h
     src/codec/packet_merge.h
