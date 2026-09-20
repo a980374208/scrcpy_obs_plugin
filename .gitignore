@@ -28,6 +28,5 @@ Makefile
 *.swp
 *~
 
-knowledge/*
+knowledge/
 tests/
-!knowledge/reviews/
